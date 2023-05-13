@@ -51,6 +51,8 @@ func (a *AWSPubSubAdapter) Subscribe(queueURL string, handler func(msg []byte)) 
 			return err
 		}
 
+		// TODO: need to decide if this is how we should handle messages that
+		// have been received.
 		for _, message := range result.Messages {
 			handler([]byte(*message.Body))
 

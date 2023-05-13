@@ -29,7 +29,9 @@ func (r *RedisPubSubAdapter) Publish(topic string, message []byte) error {
 
 func (r *RedisPubSubAdapter) Subscribe(topic string, handler func(msg []byte)) error {
 	pubsub := r.client.Subscribe(r.ctx, topic)
-	_, err := pubsub.Receive(r.ctx)
+	defer pubsub.Close()
+
+	_, err := pubsub.ReceiveMessage(r.ctx)
 	if err != nil {
 		return err
 	}

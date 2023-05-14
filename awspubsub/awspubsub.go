@@ -3,6 +3,7 @@ package awspubsub
 import (
 	"github.com/Orange-Health/pubsublib/pubsub"
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/sns"
 	"github.com/aws/aws-sdk-go/service/sqs"
@@ -13,8 +14,15 @@ type AWSPubSubAdapter struct {
 	sqsClient *sqs.SQS
 }
 
-func NewAWSPubSubAdapter() (pubsub.PubSub, error) {
-	sess, err := session.NewSession()
+func NewAWSPubSubAdapter(region, accessKeyId, secretAccessKey string) (pubsub.PubSub, error) {
+	sess, err := session.NewSession(&aws.Config{
+		Region: aws.String(region),
+		Credentials: credentials.NewStaticCredentials(
+			accessKeyId,
+			secretAccessKey,
+			"", // a token will be created when the session it's used.
+		),
+	})
 	if err != nil {
 		return nil, err
 	}

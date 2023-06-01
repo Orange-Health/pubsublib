@@ -1,10 +1,10 @@
-package redispubsub
+package redis
 
 import (
 	"context"
 
 	"github.com/Orange-Health/pubsublib/pubsub"
-	"github.com/redis/go-redis/v9"
+	"github.com/go-redis/redis/v8"
 )
 
 type RedisPubSubAdapter struct {
@@ -12,7 +12,7 @@ type RedisPubSubAdapter struct {
 	ctx    context.Context
 }
 
-func NewRedisPubSubAdapter(addr string) (pubsub.PubSub, error) {
+func NewRedisPubSubAdapter(addr string) (*RedisPubSubAdapter, error) {
 	ctx := context.Background()
 	client := redis.NewClient(&redis.Options{
 		Addr: addr,
@@ -23,11 +23,15 @@ func NewRedisPubSubAdapter(addr string) (pubsub.PubSub, error) {
 	}, nil
 }
 
-func (r *RedisPubSubAdapter) Publish(topic string, message []byte) error {
-	return r.client.Publish(r.ctx, topic, message).Err()
+func (r *RedisPubSubAdapter) Publish(topicARN string, message interface{}, attributeName string, attributeValue string) error {
+	err := r.client.Publish(r.ctx, topicARN, message).Err()
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
-func (r *RedisPubSubAdapter) Subscribe(topic string, handler func(msg []byte)) error {
+func (r *RedisPubSubAdapter) PollMessages(topic string, handler pubsub.MessageHandler) error {
 	pubsub := r.client.Subscribe(r.ctx, topic)
 	defer pubsub.Close()
 

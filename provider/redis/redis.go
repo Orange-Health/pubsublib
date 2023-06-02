@@ -3,7 +3,7 @@ package redis
 import (
 	"context"
 
-	"github.com/Orange-Health/pubsublib/pubsub"
+	pubsub "github.com/Orange-Health/pubsublib"
 	"github.com/go-redis/redis/v8"
 )
 

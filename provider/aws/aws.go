@@ -1,12 +1,14 @@
 package aws
 
 import (
+	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 
-	pubsub "github.com/Orange-Health/pubsublib"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -21,7 +23,7 @@ type AWSPubSubAdapter struct {
 	sqsSvc  sqsiface.SQSAPI
 }
 
-func NewAWSPubSubAdapter(region, accessKeyId, secretAccessKey string) (*AWSPubSubAdapter, error) {
+func NewAWSPubSubAdapter(region string, accessKeyId string, secretAccessKey string) (*AWSPubSubAdapter, error) {
 	sess, err := session.NewSession(&aws.Config{
 		Region: aws.String(region),
 		Credentials: credentials.NewStaticCredentials(
@@ -44,23 +46,68 @@ func NewAWSPubSubAdapter(region, accessKeyId, secretAccessKey string) (*AWSPubSu
 	}, nil
 }
 
-func (ps *AWSPubSubAdapter) Publish(topicARN string, message interface{}, attributeName string, attributeValue string) error {
-	b, _ := message.(string)
-	_, err := ps.snsSvc.Publish(&sns.PublishInput{
-		Message:  aws.String(b),
-		TopicArn: aws.String(topicARN),
-		MessageAttributes: map[string]*sns.MessageAttributeValue{
-			attributeName: {
-				DataType:    aws.String("String"),
-				StringValue: aws.String(attributeValue),
-			},
-		},
+func (ps *AWSPubSubAdapter) Publish(topicARN string, message interface{}, source string, messageAttributes map[string]interface{}) error {
+	jsonString, err := json.Marshal(message)
+	if err != nil {
+		fmt.Println("Error:", err)
+		return err
+	}
+	if source == "" {
+		return fmt.Errorf("source cannot be empty")
+	}
+	awsMessageAttributes := map[string]*sns.MessageAttributeValue{}
+	if messageAttributes != nil {
+		awsMessageAttributes, _ = BindAttributes(messageAttributes)
+	}
+	awsMessageAttributes["source"] = &sns.MessageAttributeValue{
+		DataType:    aws.String("String"),
+		StringValue: aws.String(source),
+	}
+	result, err := ps.snsSvc.Publish(&sns.PublishInput{
+		Message:           aws.String(string(jsonString)),
+		TopicArn:          aws.String(topicARN),
+		MessageAttributes: awsMessageAttributes,
 	})
-	return err
+	if err != nil {
+		fmt.Println("Error publishing message to SNS:", err)
+		return err
+	}
+	fmt.Println("Published message to SNS with ID:", *result.MessageId)
+	return nil
+}
+
+func (ps *AWSPubSubAdapter) PollMessages(topicARN string, handler func(message []byte) error) {
+	result, err := ps.sqsSvc.ReceiveMessage(&sqs.ReceiveMessageInput{
+		QueueUrl:            aws.String(topicARN),
+		MaxNumberOfMessages: aws.Int64(10),
+		VisibilityTimeout:   aws.Int64(5),
+		WaitTimeSeconds:     aws.Int64(20),
+	})
+
+	if err != nil {
+		log.Println("Error receiving message:", err)
+	}
+
+	for _, message := range result.Messages {
+		fmt.Println("Received message to SQS:", message)
+		err := handler([]byte(*message.Body))
+		if err != nil {
+			log.Println("Error handling message:", err)
+		}
+
+		_, err = ps.sqsSvc.DeleteMessage(&sqs.DeleteMessageInput{
+			QueueUrl:      aws.String(topicARN),
+			ReceiptHandle: message.ReceiptHandle,
+		})
+
+		if err != nil {
+			log.Println("Error deleting message:", err)
+		}
+	}
 }
 
 // not using this for v1
-func (ps *AWSPubSubAdapter) Subscribe(topicARN string, handler pubsub.MessageHandler) error {
+func (ps *AWSPubSubAdapter) Subscribe(topicARN string, handler func(message []byte) error) error {
 	subscribeOutput, err := ps.snsSvc.Subscribe(&sns.SubscribeInput{
 		Protocol: aws.String("sqs"),
 		Endpoint: aws.String(topicARN),
@@ -78,39 +125,6 @@ func (ps *AWSPubSubAdapter) Subscribe(topicARN string, handler pubsub.MessageHan
 	ps.waitForTermination(topicARN, &subscriptionARN)
 
 	return nil
-}
-
-func (ps *AWSPubSubAdapter) PollMessages(topicARN string, handler pubsub.MessageHandler) {
-	for {
-		result, err := ps.sqsSvc.ReceiveMessage(&sqs.ReceiveMessageInput{
-			QueueUrl:            aws.String(topicARN),
-			MaxNumberOfMessages: aws.Int64(10),
-			VisibilityTimeout:   aws.Int64(5),
-			WaitTimeSeconds:     aws.Int64(20),
-		})
-
-		if err != nil {
-			log.Println("Error receiving message:", err)
-			continue
-		}
-
-		for _, message := range result.Messages {
-			err := handler([]byte(*message.Body))
-			if err != nil {
-				log.Println("Error handling message:", err)
-				continue
-			}
-
-			_, err = ps.sqsSvc.DeleteMessage(&sqs.DeleteMessageInput{
-				QueueUrl:      aws.String(topicARN),
-				ReceiptHandle: message.ReceiptHandle,
-			})
-
-			if err != nil {
-				log.Println("Error deleting message:", err)
-			}
-		}
-	}
 }
 
 func (ps *AWSPubSubAdapter) waitForTermination(topicARN string, subscriptionARN *string) {
@@ -136,4 +150,36 @@ func (ps *AWSPubSubAdapter) waitForTermination(topicARN string, subscriptionARN 
 	}
 
 	os.Exit(0) // Terminate the program
+}
+
+func BindAttributes(attributes map[string]interface{}) (map[string]*sns.MessageAttributeValue, error) {
+	boundAttributes := make(map[string]*sns.MessageAttributeValue)
+
+	for key, value := range attributes {
+		attrValue, _ := convertToAttributeValue(value)
+		boundAttributes[key] = attrValue
+	}
+	return boundAttributes, nil
+}
+
+func convertToAttributeValue(value interface{}) (*sns.MessageAttributeValue, error) {
+	// Perform type assertions or conversions based on the expected types of attributes
+	// and create the appropriate sns.MessageAttributeValue object.
+
+	switch v := value.(type) {
+	case string:
+		return &sns.MessageAttributeValue{
+			DataType:    aws.String("String"),
+			StringValue: aws.String(v),
+		}, nil
+	case int:
+		return &sns.MessageAttributeValue{
+			DataType:    aws.String("Number"),
+			StringValue: aws.String(strconv.Itoa(v)),
+		}, nil
+	// Add more cases for other data types as needed
+
+	default:
+		return nil, fmt.Errorf("unsupported attribute value type: %T", value)
+	}
 }

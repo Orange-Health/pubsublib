@@ -4,7 +4,7 @@ package pubsub
 type NoopProvider struct{}
 
 // Publish does nothing
-func (np NoopProvider) Publish(topicARN string, message interface{}, attributeName string, attributeValue string) error {
+func (np NoopProvider) Publish(topicARN string, message interface{}, source string, messageAttributes map[string]interface{}) error {
 	return nil
 }
 

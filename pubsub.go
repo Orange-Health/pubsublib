@@ -1,6 +1,6 @@
 package pubsub
 
-type MessageHandler func(message []byte) error
+type MessageHandler func(message string) error
 
 var (
 	clients = []*Client{&Client{Provider: NoopProvider{}}}

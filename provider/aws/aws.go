@@ -3,11 +3,6 @@ package aws
 import (
 	"encoding/json"
 	"fmt"
-	"log"
-	"os"
-	"os/signal"
-	"strconv"
-	"syscall"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
@@ -76,7 +71,7 @@ func (ps *AWSPubSubAdapter) Publish(topicARN string, message interface{}, source
 	return nil
 }
 
-func (ps *AWSPubSubAdapter) PollMessages(topicARN string, handler func(message []byte) error) {
+func (ps *AWSPubSubAdapter) PollMessages(topicARN string, handler func(message string) error) error {
 	result, err := ps.sqsSvc.ReceiveMessage(&sqs.ReceiveMessageInput{
 		QueueUrl:            aws.String(topicARN),
 		MaxNumberOfMessages: aws.Int64(10),
@@ -85,14 +80,14 @@ func (ps *AWSPubSubAdapter) PollMessages(topicARN string, handler func(message [
 	})
 
 	if err != nil {
-		log.Println("Error receiving message:", err)
+		return err
 	}
 
 	for _, message := range result.Messages {
 		fmt.Println("Received message to SQS:", message)
-		err := handler([]byte(*message.Body))
+		err := handler(string(*message.Body))
 		if err != nil {
-			log.Println("Error handling message:", err)
+			return err
 		}
 
 		_, err = ps.sqsSvc.DeleteMessage(&sqs.DeleteMessageInput{
@@ -101,56 +96,57 @@ func (ps *AWSPubSubAdapter) PollMessages(topicARN string, handler func(message [
 		})
 
 		if err != nil {
-			log.Println("Error deleting message:", err)
+			return err
 		}
 	}
-}
-
-// not using this for v1
-func (ps *AWSPubSubAdapter) Subscribe(topicARN string, handler func(message []byte) error) error {
-	subscribeOutput, err := ps.snsSvc.Subscribe(&sns.SubscribeInput{
-		Protocol: aws.String("sqs"),
-		Endpoint: aws.String(topicARN),
-		TopicArn: aws.String(topicARN),
-	})
-
-	if err != nil {
-		return err
-	}
-	subscriptionARN := *subscribeOutput.SubscriptionArn
-
-	go ps.PollMessages(topicARN, handler)
-
-	// Wait for termination signals to unsubscribe and cleanup
-	ps.waitForTermination(topicARN, &subscriptionARN)
-
 	return nil
 }
 
-func (ps *AWSPubSubAdapter) waitForTermination(topicARN string, subscriptionARN *string) {
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+// not using this for v1
+// func (ps *AWSPubSubAdapter) Subscribe(topicARN string, handler func(message string) error) error {
+// 	subscribeOutput, err := ps.snsSvc.Subscribe(&sns.SubscribeInput{
+// 		Protocol: aws.String("sqs"),
+// 		Endpoint: aws.String(topicARN),
+// 		TopicArn: aws.String(topicARN),
+// 	})
 
-	<-sigCh // Wait for termination signal
+// 	if err != nil {
+// 		return err
+// 	}
+// 	subscriptionARN := *subscribeOutput.SubscriptionArn
 
-	// Unsubscribe from the topic
-	_, err := ps.snsSvc.Unsubscribe(&sns.UnsubscribeInput{
-		SubscriptionArn: subscriptionARN,
-	})
-	if err != nil {
-		log.Println("Error unsubscribing from the topic:", err)
-	}
+// 	go ps.PollMessages(topicARN, handler)
 
-	// Delete the SQS queue
-	_, err = ps.sqsSvc.DeleteQueue(&sqs.DeleteQueueInput{
-		QueueUrl: aws.String(topicARN),
-	})
-	if err != nil {
-		log.Println("Error deleting the queue:", err)
-	}
+// 	// Wait for termination signals to unsubscribe and cleanup
+// 	ps.waitForTermination(topicARN, &subscriptionARN)
 
-	os.Exit(0) // Terminate the program
-}
+// 	return nil
+// }
+
+// func (ps *AWSPubSubAdapter) waitForTermination(topicARN string, subscriptionARN *string) {
+// 	sigCh := make(chan os.Signal, 1)
+// 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+
+// 	<-sigCh // Wait for termination signal
+
+// 	// Unsubscribe from the topic
+// 	_, err := ps.snsSvc.Unsubscribe(&sns.UnsubscribeInput{
+// 		SubscriptionArn: subscriptionARN,
+// 	})
+// 	if err != nil {
+// 		log.Println("Error unsubscribing from the topic:", err)
+// 	}
+
+// 	// Delete the SQS queue
+// 	_, err = ps.sqsSvc.DeleteQueue(&sqs.DeleteQueueInput{
+// 		QueueUrl: aws.String(topicARN),
+// 	})
+// 	if err != nil {
+// 		log.Println("Error deleting the queue:", err)
+// 	}
+
+// 	os.Exit(0) // Terminate the program
+// }
 
 func BindAttributes(attributes map[string]interface{}) (map[string]*sns.MessageAttributeValue, error) {
 	boundAttributes := make(map[string]*sns.MessageAttributeValue)
@@ -172,10 +168,10 @@ func convertToAttributeValue(value interface{}) (*sns.MessageAttributeValue, err
 			DataType:    aws.String("String"),
 			StringValue: aws.String(v),
 		}, nil
-	case int:
+	case int, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
 		return &sns.MessageAttributeValue{
 			DataType:    aws.String("Number"),
-			StringValue: aws.String(strconv.Itoa(v)),
+			StringValue: aws.String(fmt.Sprint(v)),
 		}, nil
 	// Add more cases for other data types as needed
 

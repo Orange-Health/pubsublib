@@ -39,7 +39,7 @@ func (r *RedisPubSubAdapter) Publish(topicARN string, message interface{}, sourc
 	return nil
 }
 
-func (r *RedisPubSubAdapter) PollMessages(topic string, handler func(message []byte)) error {
+func (r *RedisPubSubAdapter) PollMessages(topic string, handler func(message string)) error {
 	pubsub := r.client.Subscribe(r.ctx, topic)
 	defer pubsub.Close()
 
@@ -50,7 +50,7 @@ func (r *RedisPubSubAdapter) PollMessages(topic string, handler func(message []b
 
 	channel := pubsub.Channel()
 	for msg := range channel {
-		handler([]byte(msg.Payload))
+		handler(string(*&msg.Payload))
 	}
 	return nil
 }

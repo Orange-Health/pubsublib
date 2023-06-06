@@ -1,4 +1,4 @@
-module github.com/Orange-Health/pubsub/v1
+module github.com/Orange-Health/pubsublib
 
 go 1.19
 

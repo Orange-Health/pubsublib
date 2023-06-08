@@ -3,6 +3,7 @@ package aws
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
@@ -41,22 +42,24 @@ func NewAWSPubSubAdapter(region string, accessKeyId string, secretAccessKey stri
 	}, nil
 }
 
-func (ps *AWSPubSubAdapter) Publish(topicARN string, message interface{}, source string, messageAttributes map[string]interface{}) error {
+func (ps *AWSPubSubAdapter) Publish(topicARN string, message interface{}, messageAttributes map[string]interface{}) error {
 	jsonString, err := json.Marshal(message)
 	if err != nil {
 		fmt.Println("Error:", err)
 		return err
 	}
-	if source == "" {
-		return fmt.Errorf("source cannot be empty")
+	if messageAttributes["source"] == nil {
+		return fmt.Errorf("should have source key in messageAttributes")
+	}
+	if messageAttributes["contains"] == nil {
+		return fmt.Errorf("should have contains key in messageAttributes")
+	}
+	if messageAttributes["eventType"] == nil {
+		return fmt.Errorf("should have eventType key in messageAttributes")
 	}
 	awsMessageAttributes := map[string]*sns.MessageAttributeValue{}
 	if messageAttributes != nil {
 		awsMessageAttributes, _ = BindAttributes(messageAttributes)
-	}
-	awsMessageAttributes["source"] = &sns.MessageAttributeValue{
-		DataType:    aws.String("String"),
-		StringValue: aws.String(source),
 	}
 	result, err := ps.snsSvc.Publish(&sns.PublishInput{
 		Message:           aws.String(string(jsonString)),
@@ -172,6 +175,11 @@ func convertToAttributeValue(value interface{}) (*sns.MessageAttributeValue, err
 		return &sns.MessageAttributeValue{
 			DataType:    aws.String("Number"),
 			StringValue: aws.String(fmt.Sprint(v)),
+		}, nil
+	case []string:
+		return &sns.MessageAttributeValue{
+			DataType:    aws.String("String.Array"),
+			StringValue: aws.String(strings.Join(v, ",")),
 		}, nil
 	// Add more cases for other data types as needed
 

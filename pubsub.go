@@ -14,7 +14,7 @@ type Client struct {
 }
 
 type Provider interface {
-	Publish(topicARN string, message interface{}, source string, messageAttributes map[string]interface{}) error
+	Publish(topicARN string, message interface{}, messageAttributes map[string]interface{}) error
 	PollMessages(queueURL string, handler MessageHandler) error
 }
 
@@ -24,7 +24,7 @@ func SetClient(cli *Client) {
 }
 
 // PublishHandler wraps a call to publish, for interception
-type PublishHandler func(topicARN string, message interface{}, source string, messageAttributes map[string]interface{}) error
+type PublishHandler func(topicARN string, message interface{}, messageAttributes map[string]interface{}) error
 
 // Middleware is an interface to provide subscriber and publisher interceptors
 type Middleware interface {

@@ -23,11 +23,16 @@ func NewRedisPubSubAdapter(addr string) (*RedisPubSubAdapter, error) {
 	}, nil
 }
 
-func (r *RedisPubSubAdapter) Publish(topicARN string, message interface{}, source string, messageAttributes map[string]interface{}) error {
-	if source == "" {
-		return fmt.Errorf("source cannot be empty")
+func (r *RedisPubSubAdapter) Publish(topicARN string, message interface{}, messageAttributes map[string]interface{}) error {
+	if messageAttributes["source"] == nil {
+		return fmt.Errorf("should have source key in messageAttributes")
 	}
-	messageAttributes["source"] = source
+	if messageAttributes["contains"] == nil {
+		return fmt.Errorf("should have contains key in messageAttributes")
+	}
+	if messageAttributes["eventType"] == nil {
+		return fmt.Errorf("should have eventType key in messageAttributes")
+	}
 	messageWithAtrributs := map[string]interface{}{
 		"messageAttributs": messageAttributes,
 		"message":          message,

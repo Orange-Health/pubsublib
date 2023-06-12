@@ -89,6 +89,12 @@ func (ps *AWSPubSubAdapter) PollMessages(queueURL string, handler func(message *
 		MaxNumberOfMessages: aws.Int64(10),
 		VisibilityTimeout:   aws.Int64(5),
 		WaitTimeSeconds:     aws.Int64(20),
+		MessageAttributeNames: []*string{
+			aws.String("All"),
+		},
+		AttributeNames: []*string{
+			aws.String("All"),
+		},
 	})
 
 	if err != nil {

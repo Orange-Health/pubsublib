@@ -74,9 +74,13 @@ func (ps *AWSPubSubAdapter) Publish(topicARN string, message interface{}, messag
 	return nil
 }
 
-func (ps *AWSPubSubAdapter) PollMessages(topicARN string, handler func(message string) error) error {
+/*
+	Polls messages from SQS with queueURL, using long polling for 20 seconds, visibility timeout of 5 seconds and maximum of 10 messages read at once.
+	Handler func will be executed for each message individually, if error returned from the handler func is nil, message is deleted from queue, else returns error
+*/
+func (ps *AWSPubSubAdapter) PollMessages(queueURL string, handler func(message *sqs.Message) error) error {
 	result, err := ps.sqsSvc.ReceiveMessage(&sqs.ReceiveMessageInput{
-		QueueUrl:            aws.String(topicARN),
+		QueueUrl:            aws.String(queueURL),
 		MaxNumberOfMessages: aws.Int64(10),
 		VisibilityTimeout:   aws.Int64(5),
 		WaitTimeSeconds:     aws.Int64(20),
@@ -88,13 +92,13 @@ func (ps *AWSPubSubAdapter) PollMessages(topicARN string, handler func(message s
 
 	for _, message := range result.Messages {
 		fmt.Println("Received message to SQS:", message)
-		err := handler(string(*message.Body))
+		err := handler(message)
 		if err != nil {
 			return err
 		}
 
 		_, err = ps.sqsSvc.DeleteMessage(&sqs.DeleteMessageInput{
-			QueueUrl:      aws.String(topicARN),
+			QueueUrl:      aws.String(queueURL),
 			ReceiptHandle: message.ReceiptHandle,
 		})
 

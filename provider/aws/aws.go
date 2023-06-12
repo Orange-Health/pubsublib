@@ -42,6 +42,11 @@ func NewAWSPubSubAdapter(region string, accessKeyId string, secretAccessKey stri
 	}, nil
 }
 
+/*
+	Publishes the message with the messageAttributes to the topicARN provided.
+	source, contains and eventType are necessary keys in messageAttributes.
+	Returns error if fails to publish message
+*/
 func (ps *AWSPubSubAdapter) Publish(topicARN string, message interface{}, messageAttributes map[string]interface{}) error {
 	jsonString, err := json.Marshal(message)
 	if err != nil {

@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/sns"
 	"github.com/aws/aws-sdk-go/service/sqs"
 	"github.com/aws/aws-sdk-go/service/sqs/sqsiface"
+	"github.com/google/uuid"
 )
 
 type AWSPubSubAdapter struct {
@@ -43,9 +44,9 @@ func NewAWSPubSubAdapter(region string, accessKeyId string, secretAccessKey stri
 }
 
 /*
-	Publishes the message with the messageAttributes to the topicARN provided.
-	source, contains and eventType are necessary keys in messageAttributes.
-	Returns error if fails to publish message
+Publishes the message with the messageAttributes to the topicARN provided.
+source, contains and eventType are necessary keys in messageAttributes.
+Returns error if fails to publish message
 */
 func (ps *AWSPubSubAdapter) Publish(topicARN string, message interface{}, messageAttributes map[string]interface{}) error {
 	jsonString, err := json.Marshal(message)
@@ -61,6 +62,9 @@ func (ps *AWSPubSubAdapter) Publish(topicARN string, message interface{}, messag
 	}
 	if messageAttributes["eventType"] == nil {
 		return fmt.Errorf("should have eventType key in messageAttributes")
+	}
+	if messageAttributes["traceID"] == nil {
+		messageAttributes["traceID"] = uuid.New()
 	}
 	awsMessageAttributes := map[string]*sns.MessageAttributeValue{}
 	if messageAttributes != nil {
@@ -80,8 +84,8 @@ func (ps *AWSPubSubAdapter) Publish(topicARN string, message interface{}, messag
 }
 
 /*
-	Polls messages from SQS with queueURL, using long polling for 20 seconds, visibility timeout of 5 seconds and maximum of 10 messages read at once.
-	Handler func will be executed for each message individually, if error returned from the handler func is nil, message is deleted from queue, else returns error
+Polls messages from SQS with queueURL, using long polling for 20 seconds, visibility timeout of 5 seconds and maximum of 10 messages read at once.
+Handler func will be executed for each message individually, if error returned from the handler func is nil, message is deleted from queue, else returns error
 */
 func (ps *AWSPubSubAdapter) PollMessages(queueURL string, handler func(message *sqs.Message) error) error {
 	result, err := ps.sqsSvc.ReceiveMessage(&sqs.ReceiveMessageInput{

@@ -51,7 +51,6 @@ Returns error if fails to publish message
 func (ps *AWSPubSubAdapter) Publish(topicARN string, message interface{}, messageAttributes map[string]interface{}) error {
 	jsonString, err := json.Marshal(message)
 	if err != nil {
-		fmt.Println("Error:", err)
 		return err
 	}
 	if messageAttributes["source"] == nil {
@@ -76,10 +75,8 @@ func (ps *AWSPubSubAdapter) Publish(topicARN string, message interface{}, messag
 		MessageAttributes: awsMessageAttributes,
 	})
 	if err != nil {
-		fmt.Println("Error publishing message to SNS:", err)
 		return err
 	}
-	fmt.Println("Published message to SNS with ID:", *result.MessageId)
 	return nil
 }
 
@@ -106,7 +103,6 @@ func (ps *AWSPubSubAdapter) PollMessages(queueURL string, handler func(message *
 	}
 
 	for _, message := range result.Messages {
-		fmt.Println("Received message to SQS:", message)
 		err := handler(message)
 		if err != nil {
 			return err

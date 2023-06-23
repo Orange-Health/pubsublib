@@ -69,7 +69,7 @@ func (ps *AWSPubSubAdapter) Publish(topicARN string, message interface{}, messag
 	if messageAttributes != nil {
 		awsMessageAttributes, _ = BindAttributes(messageAttributes)
 	}
-	result, err := ps.snsSvc.Publish(&sns.PublishInput{
+	_, err = ps.snsSvc.Publish(&sns.PublishInput{
 		Message:           aws.String(string(jsonString)),
 		TopicArn:          aws.String(topicARN),
 		MessageAttributes: awsMessageAttributes,

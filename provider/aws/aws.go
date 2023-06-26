@@ -67,7 +67,7 @@ func (ps *AWSPubSubAdapter) Publish(topicARN string, message interface{}, messag
 		return fmt.Errorf("should have contains key in messageAttributes")
 	}
 	if messageAttributes["event_type"] == nil {
-		return fmt.Errorf("should have eventType key in messageAttributes")
+		return fmt.Errorf("should have event_type key in messageAttributes")
 	}
 	if messageAttributes["trace_id"] == nil {
 		messageAttributes["trace_id"] = uuid.New().String()

@@ -11,7 +11,6 @@ func ConvertBodyToSnakeCase(test map[string]interface{}) map[string]interface{} 
 		case map[string]interface{}:
 			returnMap[convertStringToSnake(i)] = ConvertBodyToSnakeCase(v.(map[string]interface{}))
 		case []interface{}:
-			// fmt.Println("i : ", i, " v : ", v)
 			returnMap[convertStringToSnake(i)] = handleSliceOfInterface(v.([]interface{}))
 		default:
 			// Convert the name to snake case and send it here

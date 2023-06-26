@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Orange-Health/pubsublib/helper"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -49,6 +50,12 @@ source, contains and eventType are necessary keys in messageAttributes.
 Returns error if fails to publish message
 */
 func (ps *AWSPubSubAdapter) Publish(topicARN string, message interface{}, messageAttributes map[string]interface{}) error {
+	// Check if message is of type map[string]interface{} and then convert all the keys to snake_case
+	switch message.(type) {
+	case map[string]interface{}:
+		message = helper.ConvertBodyToSnakeCase(message.(map[string]interface{}))
+	}
+
 	jsonString, err := json.Marshal(message)
 	if err != nil {
 		return err
@@ -59,11 +66,11 @@ func (ps *AWSPubSubAdapter) Publish(topicARN string, message interface{}, messag
 	if messageAttributes["contains"] == nil {
 		return fmt.Errorf("should have contains key in messageAttributes")
 	}
-	if messageAttributes["eventType"] == nil {
+	if messageAttributes["event_type"] == nil {
 		return fmt.Errorf("should have eventType key in messageAttributes")
 	}
-	if messageAttributes["traceID"] == nil {
-		messageAttributes["traceID"] = uuid.New().String()
+	if messageAttributes["trace_id"] == nil {
+		messageAttributes["trace_id"] = uuid.New().String()
 	}
 	awsMessageAttributes := map[string]*sns.MessageAttributeValue{}
 	if messageAttributes != nil {

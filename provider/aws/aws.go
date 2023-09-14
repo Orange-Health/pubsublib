@@ -124,13 +124,6 @@ func (ps *AWSPubSubAdapter) PollMessages(queueURL string, handler func(message *
 			return fmt.Errorf("message corrupted")
 		}
 
-		// Decompress string if message is not corrupted.
-		messageBody, err := helper.DecompressString(*message.Body)
-		if err != nil {
-			return err
-		}
-		message.Body = aws.String(messageBody)
-
 		err = handler(message)
 		if err != nil {
 			return err

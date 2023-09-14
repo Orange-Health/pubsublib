@@ -62,6 +62,7 @@ func (ps *AWSPubSubAdapter) Publish(topicARN string, message interface{}, messag
 	if err != nil {
 		return err
 	}
+	fmt.Println("uncompressed string", string(jsonString))
 
 	// Compress the message body
 	compressedMessageBody, err := helper.CompressString(string(jsonString))

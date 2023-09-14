@@ -1,6 +1,8 @@
 package aws
 
 import (
+	"crypto/md5"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -60,6 +62,13 @@ func (ps *AWSPubSubAdapter) Publish(topicARN string, message interface{}, messag
 	if err != nil {
 		return err
 	}
+
+	// Compress the message body
+	compressedMessageBody, err := helper.CompressString(string(jsonString))
+	if err != nil {
+		return err
+	}
+
 	if messageAttributes["source"] == nil {
 		return fmt.Errorf("should have source key in messageAttributes")
 	}
@@ -77,7 +86,7 @@ func (ps *AWSPubSubAdapter) Publish(topicARN string, message interface{}, messag
 		awsMessageAttributes, _ = BindAttributes(messageAttributes)
 	}
 	_, err = ps.snsSvc.Publish(&sns.PublishInput{
-		Message:           aws.String(string(jsonString)),
+		Message:           aws.String(compressedMessageBody), // Ensures to always send compressed message
 		TopicArn:          aws.String(topicARN),
 		MessageAttributes: awsMessageAttributes,
 	})
@@ -110,7 +119,19 @@ func (ps *AWSPubSubAdapter) PollMessages(queueURL string, handler func(message *
 	}
 
 	for _, message := range result.Messages {
-		err := handler(message)
+		// Verify the message integrity
+		if !verifyMessageIntegrity(*message.Body, *message.MD5OfBody, message.MessageAttributes, *message.MD5OfMessageAttributes) {
+			return fmt.Errorf("message corrupted")
+		}
+
+		// Decompress string if message is not corrupted.
+		messageBody, err := helper.DecompressString(*message.Body)
+		if err != nil {
+			return err
+		}
+		message.Body = aws.String(messageBody)
+
+		err = handler(message)
 		if err != nil {
 			return err
 		}
@@ -208,4 +229,23 @@ func convertToAttributeValue(value interface{}) (*sns.MessageAttributeValue, err
 	default:
 		return nil, fmt.Errorf("unsupported attribute value type: %T", value)
 	}
+}
+
+/*
+	Compares the calculated MD5 hashes with the received MD5 hashes.
+	If the MD5 hashes match, the message is not corrupted hence returns true
+*/
+func verifyMessageIntegrity(messageBody, md5OfBody string, messageAttributes map[string]*sqs.MessageAttributeValue, md5OfMessageAttributes string) bool {
+	// Calculate the MD5 hash of the message body
+	calculatedMD5OfBody := calculateMD5Hash(messageBody)
+
+	// Compare the calculated MD5 hashes with the received MD5 hashes
+	return calculatedMD5OfBody == md5OfBody
+}
+
+// Calculates the MD5 hash of the data passed
+func calculateMD5Hash(data string) string {
+	hasher := md5.New()
+	hasher.Write([]byte(data))
+	return hex.EncodeToString(hasher.Sum(nil))
 }

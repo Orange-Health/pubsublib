@@ -83,7 +83,7 @@ func (ps *AWSPubSubAdapter) Publish(topicARN string, message interface{}, messag
 			return err
 		}
 
-		messageBody = ""
+		messageBody = "body is stored in redis under key PUBSUB:" + redisKey
 	}
 
 	if messageAttributes["source"] == nil {

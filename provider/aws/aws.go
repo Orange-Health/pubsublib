@@ -140,14 +140,14 @@ func (ps *AWSPubSubAdapter) PollMessages(queueURL string, handler func(message *
 		if !verifyMessageIntegrity(*message.Body, *message.MD5OfBody, message.MessageAttributes, *message.MD5OfMessageAttributes) {
 			return fmt.Errorf("message corrupted")
 		}
-		if redisKey, ok := message.MessageAttributes["redis_key"]; ok {
-			var messageBody string
-			err := ps.redisClient.Get(*redisKey.StringValue, &messageBody)
-			if err != nil {
-				return err
-			}
-			message.Body = aws.String(messageBody)
-		}
+		// if redisKey, ok := message.MessageAttributes["redis_key"]; ok {
+		// 	// should I do this here or just let the handler do it? the body is in redis anyway and the function to retrieve it is also exposed.
+		// 	if messageBody, err := ps.FetchValueFromRedis(*redisKey.StringValue); err != nil {
+		// 		return err
+		// 	} else {
+		// 		message.Body = aws.String(messageBody)
+		// 	}
+		// }
 
 		err = handler(message)
 		if err != nil {
@@ -164,6 +164,16 @@ func (ps *AWSPubSubAdapter) PollMessages(queueURL string, handler func(message *
 		}
 	}
 	return nil
+}
+
+// Expects the redis key (uuid), fetches the value from redis and returns it as string always. Since all values are stored as string in redis for now.
+func (ps *AWSPubSubAdapter) FetchValueFromRedis(redisKey string) (string, error) {
+	var messageBody string
+	err := ps.redisClient.Get(redisKey, &messageBody)
+	if err != nil {
+		return "", err
+	}
+	return messageBody, nil
 }
 
 // not using this for v1

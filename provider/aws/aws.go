@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/Orange-Health/pubsublib/helper"
+	"github.com/Orange-Health/pubsublib/infrastructure"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -18,12 +19,13 @@ import (
 )
 
 type AWSPubSubAdapter struct {
-	session *session.Session
-	snsSvc  *sns.SNS
-	sqsSvc  sqsiface.SQSAPI
+	session     *session.Session
+	snsSvc      *sns.SNS
+	sqsSvc      sqsiface.SQSAPI
+	redisClient *infrastructure.RedisDatabase
 }
 
-func NewAWSPubSubAdapter(region string, accessKeyId string, secretAccessKey string) (*AWSPubSubAdapter, error) {
+func NewAWSPubSubAdapter(region, accessKeyId, secretAccessKey, redisAddress, redisPassword string, redisDB int) (*AWSPubSubAdapter, error) {
 	sess, err := session.NewSession(&aws.Config{
 		Region: aws.String(region),
 		Credentials: credentials.NewStaticCredentials(
@@ -38,11 +40,16 @@ func NewAWSPubSubAdapter(region string, accessKeyId string, secretAccessKey stri
 
 	snsSvc := sns.New(sess)
 	sqsSvc := sqs.New(sess)
+	redisClient, err := infrastructure.NewRedisDatabase(redisAddress, redisPassword, redisDB)
+	if err != nil {
+		return nil, err
+	}
 
 	return &AWSPubSubAdapter{
-		session: sess,
-		snsSvc:  snsSvc,
-		sqsSvc:  sqsSvc,
+		session:     sess,
+		snsSvc:      snsSvc,
+		sqsSvc:      sqsSvc,
+		redisClient: redisClient,
 	}, nil
 }
 
@@ -62,12 +69,21 @@ func (ps *AWSPubSubAdapter) Publish(topicARN string, message interface{}, messag
 	if err != nil {
 		return err
 	}
-	fmt.Println("uncompressed string", string(jsonString))
 
-	// Compress the message body
-	compressedMessageBody, err := helper.CompressString(string(jsonString))
-	if err != nil {
-		return err
+	// figure out the message body as required
+	messageBody := string(jsonString)
+	if len(messageBody) > 200*1024 {
+		// body is larger than 200kB. Best to put it in redis with expiry time of 10 days
+		redisKey := uuid.New().String()
+		messageAttributes["redis_key"] = redisKey
+
+		// Set the message body in redis db
+		err := ps.redisClient.Set(redisKey, messageBody, 10*24*60)
+		if err != nil {
+			return err
+		}
+
+		messageBody = ""
 	}
 
 	if messageAttributes["source"] == nil {
@@ -87,7 +103,7 @@ func (ps *AWSPubSubAdapter) Publish(topicARN string, message interface{}, messag
 		awsMessageAttributes, _ = BindAttributes(messageAttributes)
 	}
 	_, err = ps.snsSvc.Publish(&sns.PublishInput{
-		Message:           aws.String(compressedMessageBody), // Ensures to always send compressed message
+		Message:           aws.String(messageBody), // Ensures to always send compressed message
 		TopicArn:          aws.String(topicARN),
 		MessageAttributes: awsMessageAttributes,
 	})
@@ -123,6 +139,9 @@ func (ps *AWSPubSubAdapter) PollMessages(queueURL string, handler func(message *
 		// Verify the message integrity
 		if !verifyMessageIntegrity(*message.Body, *message.MD5OfBody, message.MessageAttributes, *message.MD5OfMessageAttributes) {
 			return fmt.Errorf("message corrupted")
+		}
+		if redisKey, ok := message.MessageAttributes["redis_key"]; ok {
+			fmt.Println("Exists in redis key : ", redisKey)
 		}
 
 		err = handler(message)

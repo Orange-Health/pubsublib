@@ -140,14 +140,13 @@ func (ps *AWSPubSubAdapter) PollMessages(queueURL string, handler func(message *
 		if !verifyMessageIntegrity(*message.Body, *message.MD5OfBody, message.MessageAttributes, *message.MD5OfMessageAttributes) {
 			return fmt.Errorf("message corrupted")
 		}
-		// if redisKey, ok := message.MessageAttributes["redis_key"]; ok {
-		// 	// should I do this here or just let the handler do it? the body is in redis anyway and the function to retrieve it is also exposed.
-		// 	if messageBody, err := ps.FetchValueFromRedis(*redisKey.StringValue); err != nil {
-		// 		return err
-		// 	} else {
-		// 		message.Body = aws.String(messageBody)
-		// 	}
-		// }
+		if redisKey, ok := message.MessageAttributes["redis_key"]; ok {
+			if messageBody, err := ps.FetchValueFromRedis(*redisKey.StringValue); err != nil {
+				return err
+			} else {
+				message.Body = aws.String(messageBody)
+			}
+		}
 
 		err = handler(message)
 		if err != nil {

@@ -141,7 +141,12 @@ func (ps *AWSPubSubAdapter) PollMessages(queueURL string, handler func(message *
 			return fmt.Errorf("message corrupted")
 		}
 		if redisKey, ok := message.MessageAttributes["redis_key"]; ok {
-			fmt.Println("Exists in redis key : ", redisKey)
+			var messageBody string
+			err := ps.redisClient.Get(*redisKey.StringValue, &messageBody)
+			if err != nil {
+				return err
+			}
+			message.Body = aws.String(messageBody)
 		}
 
 		err = handler(message)

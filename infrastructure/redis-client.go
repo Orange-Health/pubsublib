@@ -41,7 +41,7 @@ func NewRedisDatabase(address string, password string, db int) (*RedisDatabase, 
 // Set a key/value pair in redis with expiry time in minutes
 func (rdb RedisDatabase) Set(key string, data interface{}, expiryTime int) error {
 	key = keyPrefix + ":" + key
-	log.Println("Storing data in redis key,value:", key, data)
+
 	value, err := json.Marshal(data)
 	if err != nil {
 		return err
@@ -50,7 +50,7 @@ func (rdb RedisDatabase) Set(key string, data interface{}, expiryTime int) error
 	if err != nil {
 		return err
 	}
-	log.Println("Stored data in redis key,value:", key, data, "successfully")
+
 	return nil
 }
 

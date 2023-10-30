@@ -1,11 +1,14 @@
 package aws
 
 import (
+	"crypto/md5"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/Orange-Health/pubsublib/helper"
+	"github.com/Orange-Health/pubsublib/infrastructure"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -16,12 +19,13 @@ import (
 )
 
 type AWSPubSubAdapter struct {
-	session *session.Session
-	snsSvc  *sns.SNS
-	sqsSvc  sqsiface.SQSAPI
+	session     *session.Session
+	snsSvc      *sns.SNS
+	sqsSvc      sqsiface.SQSAPI
+	redisClient *infrastructure.RedisDatabase
 }
 
-func NewAWSPubSubAdapter(region string, accessKeyId string, secretAccessKey string) (*AWSPubSubAdapter, error) {
+func NewAWSPubSubAdapter(region, accessKeyId, secretAccessKey, redisAddress, redisPassword string, redisDB int) (*AWSPubSubAdapter, error) {
 	sess, err := session.NewSession(&aws.Config{
 		Region: aws.String(region),
 		Credentials: credentials.NewStaticCredentials(
@@ -36,11 +40,16 @@ func NewAWSPubSubAdapter(region string, accessKeyId string, secretAccessKey stri
 
 	snsSvc := sns.New(sess)
 	sqsSvc := sqs.New(sess)
+	redisClient, err := infrastructure.NewRedisDatabase(redisAddress, redisPassword, redisDB)
+	if err != nil {
+		return nil, err
+	}
 
 	return &AWSPubSubAdapter{
-		session: sess,
-		snsSvc:  snsSvc,
-		sqsSvc:  sqsSvc,
+		session:     sess,
+		snsSvc:      snsSvc,
+		sqsSvc:      sqsSvc,
+		redisClient: redisClient,
 	}, nil
 }
 
@@ -60,6 +69,23 @@ func (ps *AWSPubSubAdapter) Publish(topicARN string, message interface{}, messag
 	if err != nil {
 		return err
 	}
+
+	// figure out the message body as required
+	messageBody := string(jsonString)
+	if len(messageBody) > 200*1024 {
+		// body is larger than 200kB. Best to put it in redis with expiry time of 10 days
+		redisKey := uuid.New().String()
+		messageAttributes["redis_key"] = redisKey
+
+		// Set the message body in redis db
+		err := ps.redisClient.Set(redisKey, messageBody, 10*24*60)
+		if err != nil {
+			return err
+		}
+
+		messageBody = "body is stored in redis under key PUBSUB:" + redisKey
+	}
+
 	if messageAttributes["source"] == nil {
 		return fmt.Errorf("should have source key in messageAttributes")
 	}
@@ -77,7 +103,7 @@ func (ps *AWSPubSubAdapter) Publish(topicARN string, message interface{}, messag
 		awsMessageAttributes, _ = BindAttributes(messageAttributes)
 	}
 	_, err = ps.snsSvc.Publish(&sns.PublishInput{
-		Message:           aws.String(string(jsonString)),
+		Message:           aws.String(messageBody), // Ensures to always send compressed message
 		TopicArn:          aws.String(topicARN),
 		MessageAttributes: awsMessageAttributes,
 	})
@@ -110,7 +136,19 @@ func (ps *AWSPubSubAdapter) PollMessages(queueURL string, handler func(message *
 	}
 
 	for _, message := range result.Messages {
-		err := handler(message)
+		// Verify the message integrity
+		if !verifyMessageIntegrity(*message.Body, *message.MD5OfBody, message.MessageAttributes, *message.MD5OfMessageAttributes) {
+			return fmt.Errorf("message corrupted")
+		}
+		if redisKey, ok := message.MessageAttributes["redis_key"]; ok {
+			if messageBody, err := ps.FetchValueFromRedis(*redisKey.StringValue); err != nil {
+				return err
+			} else {
+				message.Body = aws.String(messageBody)
+			}
+		}
+
+		err = handler(message)
 		if err != nil {
 			return err
 		}
@@ -125,6 +163,16 @@ func (ps *AWSPubSubAdapter) PollMessages(queueURL string, handler func(message *
 		}
 	}
 	return nil
+}
+
+// Expects the redis key (uuid), fetches the value from redis and returns it as string always. Since all values are stored as string in redis for now.
+func (ps *AWSPubSubAdapter) FetchValueFromRedis(redisKey string) (string, error) {
+	var messageBody string
+	err := ps.redisClient.Get(redisKey, &messageBody)
+	if err != nil {
+		return "", err
+	}
+	return messageBody, nil
 }
 
 // not using this for v1
@@ -208,4 +256,23 @@ func convertToAttributeValue(value interface{}) (*sns.MessageAttributeValue, err
 	default:
 		return nil, fmt.Errorf("unsupported attribute value type: %T", value)
 	}
+}
+
+/*
+	Compares the calculated MD5 hashes with the received MD5 hashes.
+	If the MD5 hashes match, the message is not corrupted hence returns true
+*/
+func verifyMessageIntegrity(messageBody, md5OfBody string, messageAttributes map[string]*sqs.MessageAttributeValue, md5OfMessageAttributes string) bool {
+	// Calculate the MD5 hash of the message body
+	calculatedMD5OfBody := calculateMD5Hash(messageBody)
+
+	// Compare the calculated MD5 hashes with the received MD5 hashes
+	return calculatedMD5OfBody == md5OfBody
+}
+
+// Calculates the MD5 hash of the data passed
+func calculateMD5Hash(data string) string {
+	hasher := md5.New()
+	hasher.Write([]byte(data))
+	return hex.EncodeToString(hasher.Sum(nil))
 }

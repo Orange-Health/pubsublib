@@ -25,9 +25,10 @@ type AWSPubSubAdapter struct {
 	redisClient *infrastructure.RedisDatabase
 }
 
-func NewAWSPubSubAdapter(region, accessKeyId, secretAccessKey, redisAddress, redisPassword string, redisDB int) (*AWSPubSubAdapter, error) {
+func NewAWSPubSubAdapter(region, accessKeyId, secretAccessKey, redisAddress, redisPassword, snsEndpoint string, redisDB int) (*AWSPubSubAdapter, error) {
 	sess, err := session.NewSession(&aws.Config{
 		Region: aws.String(region),
+		Endpoint: aws.String(snsEndpoint),
 		Credentials: credentials.NewStaticCredentials(
 			accessKeyId,
 			secretAccessKey,

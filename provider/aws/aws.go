@@ -167,7 +167,7 @@ func (ps *AWSPubSubAdapter) PublishFIFO(topicARN, messageGroupId string, message
 		Message:           aws.String(messageBody), // Ensures to always send compressed message
 		TopicArn:          aws.String(topicARN),
 		MessageAttributes: awsMessageAttributes,
-		messageGroupId:    aws.String(messageGroupId),
+		MessageGroupId:    aws.String(messageGroupId),
 	})
 	if err != nil {
 		return err

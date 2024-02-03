@@ -27,7 +27,7 @@ type AWSPubSubAdapter struct {
 
 func NewAWSPubSubAdapter(region, accessKeyId, secretAccessKey, redisAddress, redisPassword, snsEndpoint string, redisDB int) (*AWSPubSubAdapter, error) {
 	sess, err := session.NewSession(&aws.Config{
-		Region: aws.String(region),
+		Region:   aws.String(region),
 		Endpoint: aws.String(snsEndpoint),
 		Credentials: credentials.NewStaticCredentials(
 			accessKeyId,
@@ -107,6 +107,67 @@ func (ps *AWSPubSubAdapter) Publish(topicARN string, message interface{}, messag
 		Message:           aws.String(messageBody), // Ensures to always send compressed message
 		TopicArn:          aws.String(topicARN),
 		MessageAttributes: awsMessageAttributes,
+	})
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+/*
+Publishes the message with the messageAttributes to the FIFO enabled topicARN provided.
+source, contains and eventType are necessary keys in messageAttributes.
+Returns error if fails to publish message
+*/
+func (ps *AWSPubSubAdapter) PublishFIFO(topicARN, messageGroupId string, message interface{}, messageAttributes map[string]interface{}) error {
+	// Check if message is of type map[string]interface{} and then convert all the keys to snake_case
+	switch message.(type) {
+	case map[string]interface{}:
+		message = helper.ConvertBodyToSnakeCase(message.(map[string]interface{}))
+	}
+
+	jsonString, err := json.Marshal(message)
+	if err != nil {
+		return err
+	}
+
+	// figure out the message body as required
+	messageBody := string(jsonString)
+	if len(messageBody) > 200*1024 {
+		// body is larger than 200kB. Best to put it in redis with expiry time of 10 days
+		redisKey := uuid.New().String()
+		messageAttributes["redis_key"] = redisKey
+
+		// Set the message body in redis db
+		err := ps.redisClient.Set(redisKey, messageBody, 10*24*60)
+		if err != nil {
+			return err
+		}
+
+		messageBody = "body is stored in redis under key PUBSUB:" + redisKey
+	}
+
+	if messageAttributes["source"] == nil {
+		return fmt.Errorf("should have source key in messageAttributes")
+	}
+	if messageAttributes["contains"] == nil {
+		return fmt.Errorf("should have contains key in messageAttributes")
+	}
+	if messageAttributes["event_type"] == nil {
+		return fmt.Errorf("should have event_type key in messageAttributes")
+	}
+	if messageAttributes["trace_id"] == nil {
+		messageAttributes["trace_id"] = uuid.New().String()
+	}
+	awsMessageAttributes := map[string]*sns.MessageAttributeValue{}
+	if messageAttributes != nil {
+		awsMessageAttributes, _ = BindAttributes(messageAttributes)
+	}
+	_, err = ps.snsSvc.Publish(&sns.PublishInput{
+		Message:           aws.String(messageBody), // Ensures to always send compressed message
+		TopicArn:          aws.String(topicARN),
+		MessageAttributes: awsMessageAttributes,
+		messageGroupId:    aws.String(messageGroupId),
 	})
 	if err != nil {
 		return err
@@ -260,8 +321,8 @@ func convertToAttributeValue(value interface{}) (*sns.MessageAttributeValue, err
 }
 
 /*
-	Compares the calculated MD5 hashes with the received MD5 hashes.
-	If the MD5 hashes match, the message is not corrupted hence returns true
+Compares the calculated MD5 hashes with the received MD5 hashes.
+If the MD5 hashes match, the message is not corrupted hence returns true
 */
 func verifyMessageIntegrity(messageBody, md5OfBody string, messageAttributes map[string]*sqs.MessageAttributeValue, md5OfMessageAttributes string) bool {
 	// Calculate the MD5 hash of the message body

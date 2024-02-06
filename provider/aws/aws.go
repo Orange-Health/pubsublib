@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Orange-Health/pubsublib/helper"
-	"github.com/Orange-Health/pubsublib/infrastructure"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -16,6 +14,9 @@ import (
 	"github.com/aws/aws-sdk-go/service/sqs"
 	"github.com/aws/aws-sdk-go/service/sqs/sqsiface"
 	"github.com/google/uuid"
+
+	"github.com/Orange-Health/pubsublib/helper"
+	"github.com/Orange-Health/pubsublib/infrastructure"
 )
 
 type AWSPubSubAdapter struct {
@@ -119,7 +120,7 @@ Publishes the message with the messageAttributes to the FIFO enabled topicARN pr
 source, contains and eventType are necessary keys in messageAttributes.
 Returns error if fails to publish message
 */
-func (ps *AWSPubSubAdapter) PublishFIFO(topicARN, messageGroupId string, message interface{}, messageAttributes map[string]interface{}) error {
+func (ps *AWSPubSubAdapter) PublishFIFO(topicARN, messageGroupId, messageDeduplicationId string, message interface{}, messageAttributes map[string]interface{}) error {
 	// Check if message is of type map[string]interface{} and then convert all the keys to snake_case
 	switch message.(type) {
 	case map[string]interface{}:
@@ -164,10 +165,11 @@ func (ps *AWSPubSubAdapter) PublishFIFO(topicARN, messageGroupId string, message
 		awsMessageAttributes, _ = BindAttributes(messageAttributes)
 	}
 	_, err = ps.snsSvc.Publish(&sns.PublishInput{
-		Message:           aws.String(messageBody), // Ensures to always send compressed message
-		TopicArn:          aws.String(topicARN),
-		MessageAttributes: awsMessageAttributes,
-		MessageGroupId:    aws.String(messageGroupId),
+		Message:                aws.String(messageBody), // Ensures to always send compressed message
+		TopicArn:               aws.String(topicARN),
+		MessageAttributes:      awsMessageAttributes,
+		MessageGroupId:         aws.String(messageGroupId),
+		MessageDeduplicationId: aws.String(messageDeduplicationId),
 	})
 	if err != nil {
 		return err

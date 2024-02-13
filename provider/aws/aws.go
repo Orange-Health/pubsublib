@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Orange-Health/pubsublib/helper"
-	"github.com/Orange-Health/pubsublib/infrastructure"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -16,6 +14,9 @@ import (
 	"github.com/aws/aws-sdk-go/service/sqs"
 	"github.com/aws/aws-sdk-go/service/sqs/sqsiface"
 	"github.com/google/uuid"
+
+	"github.com/Orange-Health/pubsublib/helper"
+	"github.com/Orange-Health/pubsublib/infrastructure"
 )
 
 type AWSPubSubAdapter struct {
@@ -27,7 +28,7 @@ type AWSPubSubAdapter struct {
 
 func NewAWSPubSubAdapter(region, accessKeyId, secretAccessKey, redisAddress, redisPassword, snsEndpoint string, redisDB int) (*AWSPubSubAdapter, error) {
 	sess, err := session.NewSession(&aws.Config{
-		Region: aws.String(region),
+		Region:   aws.String(region),
 		Endpoint: aws.String(snsEndpoint),
 		Credentials: credentials.NewStaticCredentials(
 			accessKeyId,
@@ -58,8 +59,12 @@ func NewAWSPubSubAdapter(region, accessKeyId, secretAccessKey, redisAddress, red
 Publishes the message with the messageAttributes to the topicARN provided.
 source, contains and eventType are necessary keys in messageAttributes.
 Returns error if fails to publish message
+
+When the SNS Topic is FIFO type, messageGroupId and messageDeduplicationId are required.
+- messageGroupId : SNS orders the messages in a message group into a sequence.
+- messageDeduplicationId : SNS uses this to determine whether to create a new message or to use an existing one.
 */
-func (ps *AWSPubSubAdapter) Publish(topicARN string, message interface{}, messageAttributes map[string]interface{}) error {
+func (ps *AWSPubSubAdapter) Publish(topicARN string, messageGroupId, messageDeduplicationId string, message interface{}, messageAttributes map[string]interface{}) error {
 	// Check if message is of type map[string]interface{} and then convert all the keys to snake_case
 	switch message.(type) {
 	case map[string]interface{}:
@@ -104,9 +109,11 @@ func (ps *AWSPubSubAdapter) Publish(topicARN string, message interface{}, messag
 		awsMessageAttributes, _ = BindAttributes(messageAttributes)
 	}
 	_, err = ps.snsSvc.Publish(&sns.PublishInput{
-		Message:           aws.String(messageBody), // Ensures to always send compressed message
-		TopicArn:          aws.String(topicARN),
-		MessageAttributes: awsMessageAttributes,
+		Message:                aws.String(messageBody), // Ensures to always send compressed message
+		TopicArn:               aws.String(topicARN),
+		MessageAttributes:      awsMessageAttributes,
+		MessageGroupId:         aws.String(messageGroupId),
+		MessageDeduplicationId: aws.String(messageDeduplicationId),
 	})
 	if err != nil {
 		return err
@@ -260,8 +267,8 @@ func convertToAttributeValue(value interface{}) (*sns.MessageAttributeValue, err
 }
 
 /*
-	Compares the calculated MD5 hashes with the received MD5 hashes.
-	If the MD5 hashes match, the message is not corrupted hence returns true
+Compares the calculated MD5 hashes with the received MD5 hashes.
+If the MD5 hashes match, the message is not corrupted hence returns true
 */
 func verifyMessageIntegrity(messageBody, md5OfBody string, messageAttributes map[string]*sqs.MessageAttributeValue, md5OfMessageAttributes string) bool {
 	// Calculate the MD5 hash of the message body

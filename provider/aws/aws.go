@@ -86,7 +86,7 @@ func (ps *AWSPubSubAdapter) Publish(topicARN string, messageGroupId, messageDedu
 		messageAttributes["redis_key"] = redisKey
 
 		// Set the message body in redis db
-		err := ps.redisClient.Set(redisKey, messageBody, 10*24*60)
+		err := ps.redisClient.Set(redisKey, messageBody, 2*60)
 		if err != nil {
 			return err
 		}

@@ -26,7 +26,8 @@ type AWSPubSubAdapter struct {
 	redisClient *infrastructure.RedisDatabase
 }
 
-func NewAWSPubSubAdapter(region, accessKeyId, secretAccessKey, redisAddress, redisPassword, snsEndpoint string, redisDB int) (*AWSPubSubAdapter, error) {
+func NewAWSPubSubAdapter(region, accessKeyId, secretAccessKey, snsEndpoint, redisAddress, redisPassword string, redisDB, redisPoolSize, redisMinIdleConn int) (*AWSPubSubAdapter, error) {
+
 	sess, err := session.NewSession(&aws.Config{
 		Region:   aws.String(region),
 		Endpoint: aws.String(snsEndpoint),
@@ -42,7 +43,8 @@ func NewAWSPubSubAdapter(region, accessKeyId, secretAccessKey, redisAddress, red
 
 	snsSvc := sns.New(sess)
 	sqsSvc := sqs.New(sess)
-	redisClient, err := infrastructure.NewRedisDatabase(redisAddress, redisPassword, redisDB)
+
+	redisClient, err := infrastructure.NewRedisDatabase(redisAddress, redisPassword, redisDB, redisPoolSize, redisMinIdleConn)
 	if err != nil {
 		return nil, err
 	}
@@ -84,7 +86,7 @@ func (ps *AWSPubSubAdapter) Publish(topicARN string, messageGroupId, messageDedu
 		messageAttributes["redis_key"] = redisKey
 
 		// Set the message body in redis db
-		err := ps.redisClient.Set(redisKey, messageBody, 10*24*60)
+		err = ps.redisClient.Set(redisKey, messageBody, 2*60)
 		if err != nil {
 			return err
 		}
@@ -108,13 +110,18 @@ func (ps *AWSPubSubAdapter) Publish(topicARN string, messageGroupId, messageDedu
 	if messageAttributes != nil {
 		awsMessageAttributes, _ = BindAttributes(messageAttributes)
 	}
-	_, err = ps.snsSvc.Publish(&sns.PublishInput{
-		Message:                aws.String(messageBody), // Ensures to always send compressed message
-		TopicArn:               aws.String(topicARN),
-		MessageAttributes:      awsMessageAttributes,
-		MessageGroupId:         aws.String(messageGroupId),
-		MessageDeduplicationId: aws.String(messageDeduplicationId),
-	})
+	pubslishMessage := &sns.PublishInput{
+		Message:           aws.String(messageBody), // Ensures to always send compressed message
+		TopicArn:          aws.String(topicARN),
+		MessageAttributes: awsMessageAttributes,
+	}
+	if messageGroupId != "" {
+		pubslishMessage.MessageGroupId = aws.String(messageGroupId)
+	}
+	if messageDeduplicationId != "" {
+		pubslishMessage.MessageDeduplicationId = aws.String(messageDeduplicationId)
+	}
+	_, err = ps.snsSvc.Publish(pubslishMessage)
 	if err != nil {
 		return err
 	}

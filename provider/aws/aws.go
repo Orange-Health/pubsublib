@@ -110,13 +110,18 @@ func (ps *AWSPubSubAdapter) Publish(topicARN string, messageGroupId, messageDedu
 	if messageAttributes != nil {
 		awsMessageAttributes, _ = BindAttributes(messageAttributes)
 	}
-	_, err = ps.snsSvc.Publish(&sns.PublishInput{
-		Message:                aws.String(messageBody), // Ensures to always send compressed message
-		TopicArn:               aws.String(topicARN),
-		MessageAttributes:      awsMessageAttributes,
-		MessageGroupId:         aws.String(messageGroupId),
-		MessageDeduplicationId: aws.String(messageDeduplicationId),
-	})
+	pubslishMessage := &sns.PublishInput{
+		Message:           aws.String(messageBody), // Ensures to always send compressed message
+		TopicArn:          aws.String(topicARN),
+		MessageAttributes: awsMessageAttributes,
+	}
+	if messageGroupId != "" {
+		pubslishMessage.MessageGroupId = aws.String(messageGroupId)
+	}
+	if messageDeduplicationId != "" {
+		pubslishMessage.MessageDeduplicationId = aws.String(messageDeduplicationId)
+	}
+	_, err = ps.snsSvc.Publish(pubslishMessage)
 	if err != nil {
 		return err
 	}

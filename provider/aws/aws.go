@@ -80,19 +80,19 @@ func (ps *AWSPubSubAdapter) Publish(topicARN string, messageGroupId, messageDedu
 
 	// figure out the message body as required
 	messageBody := string(jsonString)
-	if len(messageBody) > 200*1024 {
-		// body is larger than 200kB. Best to put it in redis with expiry time of 10 days
-		redisKey := uuid.New().String()
-		messageAttributes["redis_key"] = redisKey
+	// if len(messageBody) > 200*1024 {
+	// body is larger than 200kB. Best to put it in redis with expiry time of 10 days
+	redisKey := uuid.New().String()
+	messageAttributes["redis_key"] = redisKey
 
-		// Set the message body in redis db
-		err := ps.redisClient.Set(redisKey, messageBody, 2*60)
-		if err != nil {
-			return err
-		}
-
-		messageBody = "body is stored in redis under key PUBSUB:" + redisKey
+	// Set the message body in redis db
+	err = ps.redisClient.Set(redisKey, messageBody, 2*60)
+	if err != nil {
+		return err
 	}
+
+	messageBody = "body is stored in redis under key PUBSUB:" + redisKey
+	// }
 
 	if messageAttributes["source"] == nil {
 		return fmt.Errorf("should have source key in messageAttributes")

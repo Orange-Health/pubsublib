@@ -26,7 +26,7 @@ type AWSPubSubAdapter struct {
 	redisClient *infrastructure.RedisDatabase
 }
 
-func NewAWSPubSubAdapter(region, accessKeyId, secretAccessKey, redisAddress, redisPassword, snsEndpoint string, redisDB int) (*AWSPubSubAdapter, error) {
+func NewAWSPubSubAdapter(region, accessKeyId, secretAccessKey, snsEndpoint string, redisClient *infrastructure.RedisDatabase) (*AWSPubSubAdapter, error) {
 	sess, err := session.NewSession(&aws.Config{
 		Region:   aws.String(region),
 		Endpoint: aws.String(snsEndpoint),
@@ -42,9 +42,10 @@ func NewAWSPubSubAdapter(region, accessKeyId, secretAccessKey, redisAddress, red
 
 	snsSvc := sns.New(sess)
 	sqsSvc := sqs.New(sess)
-	redisClient, err := infrastructure.NewRedisDatabase(redisAddress, redisPassword, redisDB)
-	if err != nil {
-		return nil, err
+
+	// Redis client can not be nil
+	if redisClient == nil {
+		return nil, fmt.Errorf("redis client can not be nil")
 	}
 
 	return &AWSPubSubAdapter{

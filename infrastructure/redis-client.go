@@ -20,24 +20,6 @@ var (
 	keyPrefix = "PUBSUB"
 )
 
-func NewRedisDatabase(address string, password string, db int) (*RedisDatabase, error) {
-	/*
-		Use this fun to get a new Redis client by passing the desired configuration.
-	*/
-	client := redis.NewClient(&redis.Options{
-		Addr:     address,
-		Password: password,
-		DB:       db,
-	})
-	if err := client.Ping(Ctx).Err(); err != nil {
-		return nil, err
-	}
-	return &RedisDatabase{
-		Client: client,
-		Ctx:    Ctx,
-	}, nil
-}
-
 // Set a key/value pair in redis with expiry time in minutes
 func (rdb RedisDatabase) Set(key string, data interface{}, expiryTime int) error {
 	key = keyPrefix + ":" + key

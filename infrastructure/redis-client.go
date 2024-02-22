@@ -20,6 +20,27 @@ var (
 	keyPrefix = "PUBSUB"
 )
 
+func PubSubRedisClient(redisAddr, redisPass string, redisDb, redisPoolSize, redisMinIdleConn int) *RedisDatabase {
+	/*
+		A global redis client to be used in OMS for PUBSUB only
+	*/
+	if Rdb != nil {
+		return Rdb
+	}
+	client := redis.NewClient(&redis.Options{
+		Addr:         redisAddr,
+		Password:     redisPass,
+		DB:           redisDb,
+		PoolSize:     redisPoolSize,
+		MinIdleConns: redisMinIdleConn,
+	})
+	Rdb = &RedisDatabase{
+		Client: client,
+		Ctx:    Ctx,
+	}
+	return Rdb
+}
+
 // Set a key/value pair in redis with expiry time in minutes
 func (rdb RedisDatabase) Set(key string, data interface{}, expiryTime int) error {
 	key = keyPrefix + ":" + key

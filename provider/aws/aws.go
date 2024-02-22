@@ -44,7 +44,6 @@ func NewAWSPubSubAdapter(region, accessKeyId, secretAccessKey, snsEndpoint, redi
 	snsSvc := sns.New(sess)
 	sqsSvc := sqs.New(sess)
 
-	// Redis client can not be nil
 	redisClient, err := infrastructure.NewRedisDatabase(redisAddress, redisPassword, redisDB, redisPoolSize, redisMinIdleConn)
 	if err != nil {
 		return nil, err

@@ -20,19 +20,19 @@ var (
 	keyPrefix = "PUBSUB"
 )
 
-func NewRedisDatabase(redisAddr, redisPass string, redisDb, redisPoolSize, redisMinIdleConn int) (*RedisDatabase, error) {
+func NewRedisDatabase(address, password string, db, poolSize, minIdleConn int) (*RedisDatabase, error) {
 	/*
-		A global redis client to be used in OMS for PUBSUB only
+		A global redis client to be used for PUBSUB
 	*/
 	if Rdb != nil {
 		return Rdb, nil
 	}
 	client := redis.NewClient(&redis.Options{
-		Addr:         redisAddr,
-		Password:     redisPass,
-		DB:           redisDb,
-		PoolSize:     redisPoolSize,
-		MinIdleConns: redisMinIdleConn,
+		Addr:         address,
+		Password:     password,
+		DB:           db,
+		PoolSize:     poolSize,
+		MinIdleConns: minIdleConn,
 	})
 	if err := client.Ping(Ctx).Err(); err != nil {
 		return nil, err

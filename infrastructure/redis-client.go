@@ -20,22 +20,28 @@ var (
 	keyPrefix = "PUBSUB"
 )
 
-func NewRedisDatabase(address string, password string, db int) (*RedisDatabase, error) {
+func NewRedisDatabase(address, password string, db, poolSize, minIdleConn int) (*RedisDatabase, error) {
 	/*
-		Use this fun to get a new Redis client by passing the desired configuration.
+		A global redis client to be used for PUBSUB
 	*/
+	if Rdb != nil {
+		return Rdb, nil
+	}
 	client := redis.NewClient(&redis.Options{
-		Addr:     address,
-		Password: password,
-		DB:       db,
+		Addr:         address,
+		Password:     password,
+		DB:           db,
+		PoolSize:     poolSize,
+		MinIdleConns: minIdleConn,
 	})
 	if err := client.Ping(Ctx).Err(); err != nil {
 		return nil, err
 	}
-	return &RedisDatabase{
+	Rdb = &RedisDatabase{
 		Client: client,
 		Ctx:    Ctx,
-	}, nil
+	}
+	return Rdb, nil
 }
 
 // Set a key/value pair in redis with expiry time in minutes

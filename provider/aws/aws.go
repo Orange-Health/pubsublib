@@ -80,8 +80,11 @@ func (ps *AWSPubSubAdapter) Publish(topicARN string, messageGroupId, messageDedu
 
 	// figure out the message body as required
 	messageBody := string(jsonString)
-	if len(messageBody) > 200*1024 {
-		// body is larger than 200kB. Best to put it in redis with expiry time of 10 days
+	if len(messageBody) > 60*1024 {
+		/*
+			moving the message body to redis and sending the key in the message body
+			for all the messages greater then 60KB.
+		*/
 		redisKey := uuid.New().String()
 		messageAttributes["redis_key"] = redisKey
 

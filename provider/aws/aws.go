@@ -152,7 +152,7 @@ func (ps *AWSPubSubAdapter) PollMessages(queueURL string, handler func(message *
 
 	for _, message := range result.Messages {
 		// Verify the message integrity
-		if !verifyMessageIntegrity(*message.Body, *message.MD5OfBody, message.MessageAttributes, *message.MD5OfMessageAttributes) {
+		if !verifyMessageIntegrity(*message.Body, *message.MD5OfBody) {
 			return fmt.Errorf("message corrupted")
 		}
 		if redisKey, ok := message.MessageAttributes["redis_key"]; ok {
@@ -277,7 +277,7 @@ func convertToAttributeValue(value interface{}) (*sns.MessageAttributeValue, err
 Compares the calculated MD5 hashes with the received MD5 hashes.
 If the MD5 hashes match, the message is not corrupted hence returns true
 */
-func verifyMessageIntegrity(messageBody, md5OfBody string, messageAttributes map[string]*sqs.MessageAttributeValue, md5OfMessageAttributes string) bool {
+func verifyMessageIntegrity(messageBody, md5OfBody string) bool {
 	// Calculate the MD5 hash of the message body
 	calculatedMD5OfBody := calculateMD5Hash(messageBody)
 

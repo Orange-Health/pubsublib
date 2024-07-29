@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
@@ -14,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/sqs"
 	"github.com/aws/aws-sdk-go/service/sqs/sqsiface"
 	"github.com/google/uuid"
+	"github.com/pkg/errors"
 
 	"github.com/Orange-Health/pubsublib/helper"
 	"github.com/Orange-Health/pubsublib/infrastructure"
@@ -108,7 +108,10 @@ func (ps *AWSPubSubAdapter) Publish(topicARN string, messageGroupId, messageDedu
 	}
 	awsMessageAttributes := map[string]*sns.MessageAttributeValue{}
 	if messageAttributes != nil {
-		awsMessageAttributes, _ = BindAttributes(messageAttributes)
+		awsMessageAttributes, err = BindAttributes(messageAttributes)
+		if err != nil {
+			return errors.Wrap(err, "error binding attributes")
+		}
 	}
 	pubslishMessage := &sns.PublishInput{
 		Message:           aws.String(messageBody), // Ensures to always send compressed message
@@ -240,7 +243,10 @@ func BindAttributes(attributes map[string]interface{}) (map[string]*sns.MessageA
 	boundAttributes := make(map[string]*sns.MessageAttributeValue)
 
 	for key, value := range attributes {
-		attrValue, _ := convertToAttributeValue(value)
+		attrValue, err := convertToAttributeValue(value)
+		if err != nil {
+			return nil, err
+		}
 		boundAttributes[key] = attrValue
 	}
 	return boundAttributes, nil
@@ -262,9 +268,13 @@ func convertToAttributeValue(value interface{}) (*sns.MessageAttributeValue, err
 			StringValue: aws.String(fmt.Sprint(v)),
 		}, nil
 	case []string:
+		jsonValue, err := json.Marshal(v)
+		if err != nil {
+			return nil, err
+		}
 		return &sns.MessageAttributeValue{
 			DataType:    aws.String("String.Array"),
-			StringValue: aws.String(strings.Join(v, ",")),
+			StringValue: aws.String(string(jsonValue)),
 		}, nil
 	// Add more cases for other data types as needed
 

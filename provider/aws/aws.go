@@ -265,7 +265,7 @@ func convertToAttributeValue(value interface{}) (*sns.MessageAttributeValue, err
 	case int, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
 		return &sns.MessageAttributeValue{
 			DataType:    aws.String("Number"),
-			StringValue: aws.String(v.(string)),
+			StringValue: aws.String(fmt.Sprint(v)),
 		}, nil
 	case []string:
 		jsonValue, err := json.Marshal(v)

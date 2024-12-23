@@ -70,7 +70,6 @@ When the SNS Topic is FIFO type, messageGroupId and messageDeduplicationId are r
 */
 func (ps *AWSPubSubAdapter) Publish(topicARN string, messageGroupId, messageDeduplicationId string, message interface{}, messageAttributes map[string]interface{}) error {
 	// Check if message is of type map[string]interface{} and then convert all the keys to snake_case
-	ctx := context.Background()
 	switch message.(type) {
 	case map[string]interface{}:
 		message = helper.ConvertBodyToSnakeCase(message.(map[string]interface{}))

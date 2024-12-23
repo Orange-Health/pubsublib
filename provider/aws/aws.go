@@ -92,9 +92,17 @@ func (ps *AWSPubSubAdapter) Publish(topicARN string, messageGroupId, messageDedu
 		if err != nil {
 			// If redis set fails, then we could possibaly cleanup the key after some time using batch deletion.
 			checker := NewKeyChecker(ps.redisClient.Client, 100) //Thats not a good method there could be another method also like using a interface
-			checker.Start(ctx)
-			checker.Add(redisKey) //keys needed here for cleanup
-			checker.Stop()        // Ensure cleanup
+			var wg sync.WaitGroup
+			wg.Add(1) 
+
+			go func() {
+				defer wg.Done() 
+				checker.Start(ctx)
+				checker.Add(redisKey) 
+			}()
+
+			wg.Wait() 
+			checker.Stop()
 
 			return fmt.Errorf("failed to set Redis key: %w", err)
 		}

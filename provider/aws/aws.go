@@ -1,10 +1,12 @@
 package aws
 
 import (
+	"context"
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
@@ -86,9 +88,23 @@ func (ps *AWSPubSubAdapter) Publish(topicARN string, messageGroupId, messageDedu
 		messageAttributes["redis_key"] = redisKey
 
 		// Set the message body in redis db
-		err = ps.redisClient.Set(redisKey, messageBody, 2*60)
+		err = ps.redisClient.Set(redisKey, messageBody, int(10*24*time.Hour))
 		if err != nil {
-			return err
+			// If redis set fails, then we could possibaly cleanup the key after some time using batch deletion.
+			checker := NewKeyChecker(ps.redisClient.Client, 100) //Thats not a good method there could be another method also like using a interface
+			var wg sync.WaitGroup
+			wg.Add(1) 
+
+			go func() {
+				defer wg.Done() 
+				checker.Start(ctx)
+				checker.Add(redisKey) 
+			}()
+
+			wg.Wait() 
+			checker.Stop()
+
+			return fmt.Errorf("failed to set Redis key: %w", err)
 		}
 
 		messageBody = "body is stored in redis under key PUBSUB:" + redisKey

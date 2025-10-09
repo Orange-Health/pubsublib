@@ -5,6 +5,7 @@ import (
     "encoding/hex"
     "encoding/json"
     "fmt"
+    "strings"
 
     "github.com/aws/aws-sdk-go/aws"
     "github.com/aws/aws-sdk-go/aws/credentials"
@@ -148,6 +149,51 @@ func (ps *AWSPubSubAdapter) PollMessages(queueURL string, handler func(message *
 				return err
 			} else {
 				message.Body = aws.String(messageBody)
+			}
+		}
+
+		// Decode/decompress if needed before handing to handler
+		{
+			var envelope map[string]interface{}
+			isSNSEnvelope := false
+			if uerr := json.Unmarshal([]byte(*message.Body), &envelope); uerr == nil {
+				if _, ok := envelope["Message"]; ok {
+					isSNSEnvelope = true
+				}
+			}
+
+			compressed := false
+			if attr, ok := message.MessageAttributes["compress"]; ok && attr.StringValue != nil && strings.EqualFold(*attr.StringValue, "true") {
+				compressed = true
+			} else if isSNSEnvelope {
+				if ma, ok := envelope["MessageAttributes"].(map[string]interface{}); ok {
+					if cmp, ok := ma["compress"].(map[string]interface{}); ok {
+						if v, ok := cmp["Value"].(string); ok && strings.EqualFold(v, "true") {
+							compressed = true
+						}
+					}
+				}
+			}
+
+			if isSNSEnvelope {
+				if msgStr, ok := envelope["Message"].(string); ok && compressed {
+					if decoded, derr := helper.Base64DecodeAndGunzipIf(msgStr, true); derr == nil {
+						envelope["Message"] = string(decoded)
+						if b, merr := json.Marshal(envelope); merr == nil {
+							message.Body = aws.String(string(b))
+						} else {
+							return merr
+						}
+					} else if derr != nil {
+						return derr
+					}
+				}
+			} else if compressed { 
+				if decoded, derr := helper.Base64DecodeAndGunzipIf(*message.Body, true); derr == nil {
+					message.Body = aws.String(string(decoded))
+				} else {
+					return derr
+				}
 			}
 		}
 

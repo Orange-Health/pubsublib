@@ -163,31 +163,13 @@ func (ps *AWSPubSubAdapter) PollMessages(queueURL string, handler func(message *
 			}
 
 			compressed := false
-			// Check flag: compress="true"
 			if attr, ok := message.MessageAttributes["compress"]; ok && attr.StringValue != nil && strings.EqualFold(*attr.StringValue, "true") {
 				compressed = true
-			}
-			// Check for citadel/hedwig flag: content_encoding="gzip"
-			if !compressed {
-				if attr, ok := message.MessageAttributes["content_encoding"]; ok && attr.StringValue != nil && strings.EqualFold(*attr.StringValue, "gzip") {
-					compressed = true
-				}
-			}
-			// Check in SNS envelope
-			if !compressed && isSNSEnvelope {
+			} else if isSNSEnvelope {
 				if ma, ok := envelope["MessageAttributes"].(map[string]interface{}); ok {
-					// Check for compress flag
 					if cmp, ok := ma["compress"].(map[string]interface{}); ok {
 						if v, ok := cmp["Value"].(string); ok && strings.EqualFold(v, "true") {
 							compressed = true
-						}
-					}
-					// Check for content_encoding flag
-					if !compressed {
-						if cmp, ok := ma["content_encoding"].(map[string]interface{}); ok {
-							if v, ok := cmp["Value"].(string); ok && strings.EqualFold(v, "gzip") {
-								compressed = true
-							}
 						}
 					}
 				}

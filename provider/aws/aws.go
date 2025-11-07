@@ -1,60 +1,56 @@
 package aws
 
 import (
-	"crypto/md5"
-	"encoding/hex"
-	"encoding/json"
-	"fmt"
+    "crypto/md5"
+    "encoding/hex"
+    "encoding/json"
+    "fmt"
+    "strings"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/sns"
-	"github.com/aws/aws-sdk-go/service/sqs"
-	"github.com/aws/aws-sdk-go/service/sqs/sqsiface"
-	"github.com/google/uuid"
-	"github.com/pkg/errors"
+    "github.com/aws/aws-sdk-go/aws"
+    "github.com/aws/aws-sdk-go/aws/credentials"
+    "github.com/aws/aws-sdk-go/aws/session"
+    "github.com/aws/aws-sdk-go/service/sns"
+    "github.com/aws/aws-sdk-go/service/sqs"
+    "github.com/aws/aws-sdk-go/service/sqs/sqsiface"
+    "github.com/google/uuid"
+    "github.com/pkg/errors"
 
-	"github.com/Orange-Health/pubsublib/helper"
-	"github.com/Orange-Health/pubsublib/infrastructure"
+    "github.com/Orange-Health/pubsublib/helper"
+    "github.com/Orange-Health/pubsublib/infrastructure"
 )
 
 type AWSPubSubAdapter struct {
-	session     *session.Session
-	snsSvc      *sns.SNS
-	sqsSvc      sqsiface.SQSAPI
-	redisClient *infrastructure.RedisDatabase
+    session     *session.Session
+    snsSvc      *sns.SNS
+    sqsSvc      sqsiface.SQSAPI
+    redisClient *infrastructure.RedisDatabase
 }
 
 func NewAWSPubSubAdapter(region, accessKeyId, secretAccessKey, snsEndpoint, redisAddress, redisPassword string, redisDB, redisPoolSize, redisMinIdleConn int) (*AWSPubSubAdapter, error) {
+    sess, err := session.NewSession(&aws.Config{
+        Region:      aws.String(region),
+        Endpoint:    aws.String(snsEndpoint),
+        Credentials: credentials.NewStaticCredentials(accessKeyId, secretAccessKey, ""),
+    })
+    if err != nil {
+        return nil, err
+    }
 
-	sess, err := session.NewSession(&aws.Config{
-		Region:   aws.String(region),
-		Endpoint: aws.String(snsEndpoint),
-		Credentials: credentials.NewStaticCredentials(
-			accessKeyId,
-			secretAccessKey,
-			"", // a token will be created when the session it's used.
-		),
-	})
-	if err != nil {
-		return nil, err
-	}
+    snsSvc := sns.New(sess)
+    sqsSvc := sqs.New(sess)
 
-	snsSvc := sns.New(sess)
-	sqsSvc := sqs.New(sess)
+    redisClient, err := infrastructure.NewRedisDatabase(redisAddress, redisPassword, redisDB, redisPoolSize, redisMinIdleConn)
+    if err != nil {
+        return nil, err
+    }
 
-	redisClient, err := infrastructure.NewRedisDatabase(redisAddress, redisPassword, redisDB, redisPoolSize, redisMinIdleConn)
-	if err != nil {
-		return nil, err
-	}
-
-	return &AWSPubSubAdapter{
-		session:     sess,
-		snsSvc:      snsSvc,
-		sqsSvc:      sqsSvc,
-		redisClient: redisClient,
-	}, nil
+    return &AWSPubSubAdapter{
+        session:     sess,
+        snsSvc:      snsSvc,
+        sqsSvc:      sqsSvc,
+        redisClient: redisClient,
+    }, nil
 }
 
 /*
@@ -67,80 +63,70 @@ When the SNS Topic is FIFO type, messageGroupId and messageDeduplicationId are r
 - messageDeduplicationId : SNS uses this to determine whether to create a new message or to use an existing one.
 */
 func (ps *AWSPubSubAdapter) Publish(topicARN string, messageGroupId, messageDeduplicationId string, message interface{}, messageAttributes map[string]interface{}) error {
-	// Check if message is of type map[string]interface{} and then convert all the keys to snake_case
-	switch message.(type) {
-	case map[string]interface{}:
-		message = helper.ConvertBodyToSnakeCase(message.(map[string]interface{}))
-	}
+    // convert to snake_case if message is a map
+    if m, ok := message.(map[string]interface{}); ok {
+        message = helper.ConvertBodyToSnakeCase(m)
+    }
 
-	jsonString, err := json.Marshal(message)
-	if err != nil {
-		return err
-	}
+    jsonBytes, err := json.Marshal(message)
+    if err != nil {
+        return err
+    }
 
-	// figure out the message body as required
-	messageBody := string(jsonString)
-	if len(messageBody) > 200*1024 {
-		// body is larger than 200kB. Best to put it in redis with expiry time of 10 days
-		redisKey := uuid.New().String()
-		messageAttributes["redis_key"] = redisKey
+    messageBody := string(jsonBytes)
 
-		// Set the message body in redis db
-		err = ps.redisClient.Set(redisKey, messageBody, 2*60)
-		if err != nil {
-			return err
-		}
+    // compress the entire json (gzip + base64)
+    if b64, err := helper.GzipAndBase64Best(jsonBytes); err == nil {
+        messageBody = b64
+        if messageAttributes == nil {
+            messageAttributes = map[string]interface{}{}
+        }
+        messageAttributes["compress"] = "true"
+    }
 
-		messageBody = "body is stored in redis under key PUBSUB:" + redisKey
-	}
-
-	if messageAttributes["source"] == nil {
-		return fmt.Errorf("should have source key in messageAttributes")
-	}
-	if messageAttributes["contains"] == nil {
-		return fmt.Errorf("should have contains key in messageAttributes")
-	}
-	if messageAttributes["event_type"] == nil {
-		return fmt.Errorf("should have event_type key in messageAttributes")
-	}
-	if messageAttributes["trace_id"] == nil {
-		messageAttributes["trace_id"] = uuid.New().String()
-	}
-	awsMessageAttributes := map[string]*sns.MessageAttributeValue{}
-	if messageAttributes != nil {
-		awsMessageAttributes, err = BindAttributes(messageAttributes)
-		if err != nil {
-			return errors.Wrap(err, "error binding attributes")
-		}
-	}
-	pubslishMessage := &sns.PublishInput{
-		Message:           aws.String(messageBody), // Ensures to always send compressed message
-		TopicArn:          aws.String(topicARN),
-		MessageAttributes: awsMessageAttributes,
-	}
-	if messageGroupId != "" {
-		pubslishMessage.MessageGroupId = aws.String(messageGroupId)
-	}
-	if messageDeduplicationId != "" {
-		pubslishMessage.MessageDeduplicationId = aws.String(messageDeduplicationId)
-	}
-	_, err = ps.snsSvc.Publish(pubslishMessage)
-	if err != nil {
-		return err
-	}
-	return nil
+    if messageAttributes["source"] == nil {
+        return fmt.Errorf("should have source key in messageAttributes")
+    }
+    if messageAttributes["contains"] == nil {
+        return fmt.Errorf("should have contains key in messageAttributes")
+    }
+    if messageAttributes["event_type"] == nil {
+        return fmt.Errorf("should have event_type key in messageAttributes")
+    }
+    if messageAttributes["trace_id"] == nil {
+        messageAttributes["trace_id"] = uuid.New().String()
+    }
+    awsMessageAttributes := map[string]*sns.MessageAttributeValue{}
+    if messageAttributes != nil {
+        var bindErr error
+        awsMessageAttributes, bindErr = BindAttributes(messageAttributes)
+        if bindErr != nil {
+            return errors.Wrap(bindErr, "error binding attributes")
+        }
+    }
+    pubslishMessage := &sns.PublishInput{
+        Message:           aws.String(messageBody),
+        TopicArn:          aws.String(topicARN),
+        MessageAttributes: awsMessageAttributes,
+    }
+    if messageGroupId != "" {
+        pubslishMessage.MessageGroupId = aws.String(messageGroupId)
+    }
+    if messageDeduplicationId != "" {
+        pubslishMessage.MessageDeduplicationId = aws.String(messageDeduplicationId)
+    }
+    _, err = ps.snsSvc.Publish(pubslishMessage)
+    if err != nil {
+        return err
+    }
+    return nil
 }
 
-/*
-Polls messages from SQS with queueURL, using long polling for 20 seconds, visibility timeout of 5 seconds and maximum of 10 messages read at once.
-Handler func will be executed for each message individually, if error returned from the handler func is nil, message is deleted from queue, else returns error
-*/
 func (ps *AWSPubSubAdapter) PollMessages(queueURL string, handler func(message *sqs.Message) error) error {
 	result, err := ps.sqsSvc.ReceiveMessage(&sqs.ReceiveMessageInput{
 		QueueUrl:            aws.String(queueURL),
 		MaxNumberOfMessages: aws.Int64(10),
 		VisibilityTimeout:   aws.Int64(5),
-		WaitTimeSeconds:     aws.Int64(20),
 		MessageAttributeNames: []*string{
 			aws.String("All"),
 		},
@@ -163,6 +149,51 @@ func (ps *AWSPubSubAdapter) PollMessages(queueURL string, handler func(message *
 				return err
 			} else {
 				message.Body = aws.String(messageBody)
+			}
+		}
+
+		// Decode/decompress if needed before handing to handler
+		{
+			var envelope map[string]interface{}
+			isSNSEnvelope := false
+			if uerr := json.Unmarshal([]byte(*message.Body), &envelope); uerr == nil {
+				if _, ok := envelope["Message"]; ok {
+					isSNSEnvelope = true
+				}
+			}
+
+			compressed := false
+			if attr, ok := message.MessageAttributes["compress"]; ok && attr.StringValue != nil && strings.EqualFold(*attr.StringValue, "true") {
+				compressed = true
+			} else if isSNSEnvelope {
+				if ma, ok := envelope["MessageAttributes"].(map[string]interface{}); ok {
+					if cmp, ok := ma["compress"].(map[string]interface{}); ok {
+						if v, ok := cmp["Value"].(string); ok && strings.EqualFold(v, "true") {
+							compressed = true
+						}
+					}
+				}
+			}
+
+			if isSNSEnvelope {
+				if msgStr, ok := envelope["Message"].(string); ok && compressed {
+					if decoded, derr := helper.Base64DecodeAndGunzipIf(msgStr, true); derr == nil {
+						envelope["Message"] = string(decoded)
+						if b, merr := json.Marshal(envelope); merr == nil {
+							message.Body = aws.String(string(b))
+						} else {
+							return merr
+						}
+					} else if derr != nil {
+						return derr
+					}
+				}
+			} else if compressed { 
+				if decoded, derr := helper.Base64DecodeAndGunzipIf(*message.Body, true); derr == nil {
+					message.Body = aws.String(string(decoded))
+				} else {
+					return derr
+				}
 			}
 		}
 

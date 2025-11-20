@@ -5,6 +5,7 @@ import (
     "encoding/hex"
     "encoding/json"
     "fmt"
+    "os"
     "strings"
 
     "github.com/aws/aws-sdk-go/aws"
@@ -25,6 +26,7 @@ type AWSPubSubAdapter struct {
     snsSvc      *sns.SNS
     sqsSvc      sqsiface.SQSAPI
     redisClient *infrastructure.RedisDatabase
+    compressEnabled bool
 }
 
 func NewAWSPubSubAdapter(region, accessKeyId, secretAccessKey, snsEndpoint, redisAddress, redisPassword string, redisDB, redisPoolSize, redisMinIdleConn int) (*AWSPubSubAdapter, error) {
@@ -45,12 +47,23 @@ func NewAWSPubSubAdapter(region, accessKeyId, secretAccessKey, snsEndpoint, redi
         return nil, err
     }
 
+    compressEnabled := false
+    if v := os.Getenv("PUBSUBLIB_COMPRESSION_ENABLED"); v != "" {
+        if strings.EqualFold(v, "true") || v == "1" {
+            compressEnabled = true
+        }
+    }
     return &AWSPubSubAdapter{
-        session:     sess,
-        snsSvc:      snsSvc,
-        sqsSvc:      sqsSvc,
-        redisClient: redisClient,
+        session:         sess,
+        snsSvc:          snsSvc,
+        sqsSvc:          sqsSvc,
+        redisClient:     redisClient,
+        compressEnabled: compressEnabled,
     }, nil
+}
+
+func (ps *AWSPubSubAdapter) SetCompressionEnabled(enabled bool) {
+    ps.compressEnabled = enabled
 }
 
 /*
@@ -75,13 +88,26 @@ func (ps *AWSPubSubAdapter) Publish(topicARN string, messageGroupId, messageDedu
 
     messageBody := string(jsonBytes)
 
-    // compress the entire json (gzip + base64)
-    if b64, err := helper.GzipAndBase64Best(jsonBytes); err == nil {
-        messageBody = b64
+    if ps.compressEnabled {
+        if b64, err := helper.GzipAndBase64Best(jsonBytes); err == nil {
+            messageBody = b64
+            if messageAttributes == nil {
+                messageAttributes = map[string]interface{}{}
+            }
+            messageAttributes["compress"] = "true"
+        }
+    }
+
+    if len(messageBody) > 200*1024 {
         if messageAttributes == nil {
             messageAttributes = map[string]interface{}{}
         }
-        messageAttributes["compress"] = "true"
+        redisKey := uuid.New().String()
+        messageAttributes["redis_key"] = redisKey
+        if err := ps.redisClient.Set(redisKey, messageBody, 2*60); err != nil {
+            return err
+        }
+        messageBody = "body is stored in redis under key PUBSUB:" + redisKey
     }
 
     if messageAttributes["source"] == nil {
@@ -170,6 +196,25 @@ func (ps *AWSPubSubAdapter) PollMessages(queueURL string, handler func(message *
 					if cmp, ok := ma["compress"].(map[string]interface{}); ok {
 						if v, ok := cmp["Value"].(string); ok && strings.EqualFold(v, "true") {
 							compressed = true
+						}
+					}
+				}
+			}
+
+			if isSNSEnvelope {
+				if ma, ok := envelope["MessageAttributes"].(map[string]interface{}); ok {
+					if rk, ok := ma["redis_key"].(map[string]interface{}); ok {
+						if v, ok := rk["Value"].(string); ok && v != "" {
+							if fetched, rerr := ps.FetchValueFromRedis(v); rerr == nil {
+								envelope["Message"] = fetched
+								if b, merr := json.Marshal(envelope); merr == nil {
+									message.Body = aws.String(string(b))
+								} else {
+									return merr
+								}
+							} else {
+								return rerr
+							}
 						}
 					}
 				}

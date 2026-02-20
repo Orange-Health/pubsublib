@@ -1,69 +1,73 @@
 package aws
 
 import (
-    "crypto/md5"
-    "encoding/hex"
-    "encoding/json"
-    "fmt"
-    "os"
-    "strings"
+	"crypto/md5"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"os"
+	"strings"
 
-    "github.com/aws/aws-sdk-go/aws"
-    "github.com/aws/aws-sdk-go/aws/credentials"
-    "github.com/aws/aws-sdk-go/aws/session"
-    "github.com/aws/aws-sdk-go/service/sns"
-    "github.com/aws/aws-sdk-go/service/sqs"
-    "github.com/aws/aws-sdk-go/service/sqs/sqsiface"
-    "github.com/google/uuid"
-    "github.com/pkg/errors"
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/sns"
+	"github.com/aws/aws-sdk-go/service/sqs"
+	"github.com/aws/aws-sdk-go/service/sqs/sqsiface"
+	"github.com/google/uuid"
+	"github.com/pkg/errors"
 
-    "github.com/Orange-Health/pubsublib/helper"
-    "github.com/Orange-Health/pubsublib/infrastructure"
+	"github.com/Orange-Health/pubsublib/helper"
+	"github.com/Orange-Health/pubsublib/infrastructure"
 )
 
 type AWSPubSubAdapter struct {
-    session     *session.Session
-    snsSvc      *sns.SNS
-    sqsSvc      sqsiface.SQSAPI
-    redisClient *infrastructure.RedisDatabase
-    compressEnabled bool
+	session         *session.Session
+	snsSvc          *sns.SNS
+	sqsSvc          sqsiface.SQSAPI
+	redisClient     *infrastructure.RedisDatabase
+	compressEnabled bool
 }
 
 func NewAWSPubSubAdapter(region, accessKeyId, secretAccessKey, snsEndpoint, redisAddress, redisPassword string, redisDB, redisPoolSize, redisMinIdleConn int) (*AWSPubSubAdapter, error) {
-    sess, err := session.NewSession(&aws.Config{
-        Region:      aws.String(region),
-        Endpoint:    aws.String(snsEndpoint),
-        Credentials: credentials.NewStaticCredentials(accessKeyId, secretAccessKey, ""),
-    })
-    if err != nil {
-        return nil, err
-    }
+	awsConfig := &aws.Config{}
+	if snsEndpoint != "" {
+		awsConfig.Endpoint = aws.String(snsEndpoint)
+	}
+	if accessKeyId != "" && secretAccessKey != "" {
+		awsConfig.Region = aws.String(region)
+		awsConfig.Credentials = credentials.NewStaticCredentials(accessKeyId, secretAccessKey, "")
+	}
+	sess, err := session.NewSession(awsConfig)
+	if err != nil {
+		return nil, err
+	}
 
-    snsSvc := sns.New(sess)
-    sqsSvc := sqs.New(sess)
+	snsSvc := sns.New(sess)
+	sqsSvc := sqs.New(sess)
 
-    redisClient, err := infrastructure.NewRedisDatabase(redisAddress, redisPassword, redisDB, redisPoolSize, redisMinIdleConn)
-    if err != nil {
-        return nil, err
-    }
+	redisClient, err := infrastructure.NewRedisDatabase(redisAddress, redisPassword, redisDB, redisPoolSize, redisMinIdleConn)
+	if err != nil {
+		return nil, err
+	}
 
-    compressEnabled := false
-    if v := os.Getenv("PUBSUBLIB_COMPRESSION_ENABLED"); v != "" {
-        if strings.EqualFold(v, "true") || v == "1" {
-            compressEnabled = true
-        }
-    }
-    return &AWSPubSubAdapter{
-        session:         sess,
-        snsSvc:          snsSvc,
-        sqsSvc:          sqsSvc,
-        redisClient:     redisClient,
-        compressEnabled: compressEnabled,
-    }, nil
+	compressEnabled := false
+	if v := os.Getenv("PUBSUBLIB_COMPRESSION_ENABLED"); v != "" {
+		if strings.EqualFold(v, "true") || v == "1" {
+			compressEnabled = true
+		}
+	}
+	return &AWSPubSubAdapter{
+		session:         sess,
+		snsSvc:          snsSvc,
+		sqsSvc:          sqsSvc,
+		redisClient:     redisClient,
+		compressEnabled: compressEnabled,
+	}, nil
 }
 
 func (ps *AWSPubSubAdapter) SetCompressionEnabled(enabled bool) {
-    ps.compressEnabled = enabled
+	ps.compressEnabled = enabled
 }
 
 /*
@@ -76,76 +80,76 @@ When the SNS Topic is FIFO type, messageGroupId and messageDeduplicationId are r
 - messageDeduplicationId : SNS uses this to determine whether to create a new message or to use an existing one.
 */
 func (ps *AWSPubSubAdapter) Publish(topicARN string, messageGroupId, messageDeduplicationId string, message interface{}, messageAttributes map[string]interface{}) error {
-    // convert to snake_case if message is a map
-    if m, ok := message.(map[string]interface{}); ok {
-        message = helper.ConvertBodyToSnakeCase(m)
-    }
+	// convert to snake_case if message is a map
+	if m, ok := message.(map[string]interface{}); ok {
+		message = helper.ConvertBodyToSnakeCase(m)
+	}
 
-    jsonBytes, err := json.Marshal(message)
-    if err != nil {
-        return err
-    }
+	jsonBytes, err := json.Marshal(message)
+	if err != nil {
+		return err
+	}
 
-    messageBody := string(jsonBytes)
+	messageBody := string(jsonBytes)
 
-    if ps.compressEnabled {
-        if b64, err := helper.GzipAndBase64Best(jsonBytes); err == nil {
-            messageBody = b64
-            if messageAttributes == nil {
-                messageAttributes = map[string]interface{}{}
-            }
-            messageAttributes["compress"] = "true"
-        }
-    }
+	if ps.compressEnabled {
+		if b64, err := helper.GzipAndBase64Best(jsonBytes); err == nil {
+			messageBody = b64
+			if messageAttributes == nil {
+				messageAttributes = map[string]interface{}{}
+			}
+			messageAttributes["compress"] = "true"
+		}
+	}
 
-    if len(messageBody) > 200*1024 {
-        if messageAttributes == nil {
-            messageAttributes = map[string]interface{}{}
-        }
-        redisKey := uuid.New().String()
-        messageAttributes["redis_key"] = redisKey
-        if err := ps.redisClient.Set(redisKey, messageBody, 2*60); err != nil {
-            return err
-        }
-        messageBody = "body is stored in redis under key PUBSUB:" + redisKey
-    }
+	if len(messageBody) > 200*1024 {
+		if messageAttributes == nil {
+			messageAttributes = map[string]interface{}{}
+		}
+		redisKey := uuid.New().String()
+		messageAttributes["redis_key"] = redisKey
+		if err := ps.redisClient.Set(redisKey, messageBody, 2*60); err != nil {
+			return err
+		}
+		messageBody = "body is stored in redis under key PUBSUB:" + redisKey
+	}
 
-    if messageAttributes["source"] == nil {
-        return fmt.Errorf("should have source key in messageAttributes")
-    }
-    if messageAttributes["contains"] == nil {
-        return fmt.Errorf("should have contains key in messageAttributes")
-    }
-    if messageAttributes["event_type"] == nil {
-        return fmt.Errorf("should have event_type key in messageAttributes")
-    }
-    if messageAttributes["trace_id"] == nil {
-        messageAttributes["trace_id"] = uuid.New().String()
-    }
-    awsMessageAttributes := map[string]*sns.MessageAttributeValue{}
-    if messageAttributes != nil {
-        var bindErr error
-        awsMessageAttributes, bindErr = BindAttributes(messageAttributes)
-        if bindErr != nil {
-            return errors.Wrap(bindErr, "error binding attributes")
-        }
-    }
-    pubslishMessage := &sns.PublishInput{
-        Message:           aws.String(messageBody),
-        TopicArn:          aws.String(topicARN),
-        MessageAttributes: awsMessageAttributes,
-    }
-    if messageGroupId != "" {
-        pubslishMessage.MessageGroupId = aws.String(messageGroupId)
-    }
-    if messageDeduplicationId != "" {
-        pubslishMessage.MessageDeduplicationId = aws.String(messageDeduplicationId)
-    }
-    _, err = ps.snsSvc.Publish(pubslishMessage)
-    if err != nil {
-        return err
-    }
-    return nil
+	if messageAttributes["source"] == nil {
+		return fmt.Errorf("should have source key in messageAttributes")
+	}
+	if messageAttributes["contains"] == nil {
+		return fmt.Errorf("should have contains key in messageAttributes")
+	}
+	if messageAttributes["event_type"] == nil {
+		return fmt.Errorf("should have event_type key in messageAttributes")
+	}
+	if messageAttributes["trace_id"] == nil {
+		messageAttributes["trace_id"] = uuid.New().String()
+	}
+	awsMessageAttributes := map[string]*sns.MessageAttributeValue{}
+	if messageAttributes != nil {
+		var bindErr error
+		awsMessageAttributes, bindErr = BindAttributes(messageAttributes)
+		if bindErr != nil {
+			return errors.Wrap(bindErr, "error binding attributes")
+		}
+	}
+	publishMessage := &sns.PublishInput{
+		Message:           aws.String(messageBody),
+		TopicArn:          aws.String(topicARN),
+		MessageAttributes: awsMessageAttributes,
+	}
+	if messageGroupId != "" {
+		publishMessage.MessageGroupId = aws.String(messageGroupId)
+	}
+	if messageDeduplicationId != "" {
+		publishMessage.MessageDeduplicationId = aws.String(messageDeduplicationId)
+	}
+	_, err = ps.snsSvc.Publish(publishMessage)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (ps *AWSPubSubAdapter) PollMessages(queueURL string, handler func(message *sqs.Message) error) error {
@@ -233,7 +237,7 @@ func (ps *AWSPubSubAdapter) PollMessages(queueURL string, handler func(message *
 						return derr
 					}
 				}
-			} else if compressed { 
+			} else if compressed {
 				if decoded, derr := helper.Base64DecodeAndGunzipIf(*message.Body, true); derr == nil {
 					message.Body = aws.String(string(decoded))
 				} else {

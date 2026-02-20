@@ -135,18 +135,18 @@ func (ps *AWSPubSubAdapter) Publish(topicARN string, messageGroupId, messageDedu
 			return errors.Wrap(bindErr, "error binding attributes")
 		}
 	}
-	pubslishMessage := &sns.PublishInput{
+	publishMessage := &sns.PublishInput{
 		Message:           aws.String(messageBody),
 		TopicArn:          aws.String(topicARN),
 		MessageAttributes: awsMessageAttributes,
 	}
 	if messageGroupId != "" {
-		pubslishMessage.MessageGroupId = aws.String(messageGroupId)
+		publishMessage.MessageGroupId = aws.String(messageGroupId)
 	}
 	if messageDeduplicationId != "" {
-		pubslishMessage.MessageDeduplicationId = aws.String(messageDeduplicationId)
+		publishMessage.MessageDeduplicationId = aws.String(messageDeduplicationId)
 	}
-	_, err = ps.snsSvc.Publish(pubslishMessage)
+	_, err = ps.snsSvc.Publish(publishMessage)
 	if err != nil {
 		return err
 	}

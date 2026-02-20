@@ -31,7 +31,9 @@ type AWSPubSubAdapter struct {
 
 func NewAWSPubSubAdapter(region, accessKeyId, secretAccessKey, snsEndpoint, redisAddress, redisPassword string, redisDB, redisPoolSize, redisMinIdleConn int) (*AWSPubSubAdapter, error) {
 	awsConfig := &aws.Config{}
-	awsConfig.Endpoint = aws.String(snsEndpoint)
+	if snsEndpoint != "" {
+		awsConfig.Endpoint = aws.String(snsEndpoint)
+	}
 	if accessKeyId != "" && secretAccessKey != "" {
 		awsConfig.Region = aws.String(region)
 		awsConfig.Credentials = credentials.NewStaticCredentials(accessKeyId, secretAccessKey, "")
